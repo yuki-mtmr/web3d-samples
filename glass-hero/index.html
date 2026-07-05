@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;700;900&display=swap" rel="stylesheet">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🫧</text></svg>">
 
   <script type="importmap">
   {"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
@@ -112,6 +113,25 @@
       color: var(--color-text-secondary);
       text-decoration: none;
       transition: color 0.3s ease;
+      position: relative;
+    }
+
+    nav a::after {
+      content: '';
+      position: absolute;
+      bottom: -4px;
+      left: 0;
+      width: 100%;
+      height: 1px;
+      background: var(--color-accent);
+      transform: scaleX(0);
+      transform-origin: left;
+      transition: transform 0.3s ease;
+    }
+
+    nav a:hover::after,
+    nav a:focus-visible::after {
+      transform: scaleX(1);
     }
 
     nav a:hover,
@@ -134,15 +154,29 @@
       max-width: 32rem;
     }
 
+    .eyebrow {
+      font-size: 0.75rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--color-text-secondary);
+      margin-bottom: var(--spacing-sm);
+      display: block;
+      animation: fadeInUp 0.8s ease-out 0ms both;
+    }
+
     h1 {
       font-family: 'Zen Kaku Gothic New', sans-serif;
       font-size: clamp(2.5rem, 8vw, 5rem);
       font-weight: 900;
       line-height: 1.1;
       letter-spacing: -0.03em;
-      color: var(--color-text-primary);
+      background: linear-gradient(135deg, #111827 60%, #4b6b9a);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
       margin-bottom: var(--spacing-md);
       word-break: break-word;
+      animation: fadeInUp 0.8s ease-out 120ms both;
     }
 
     .subtitle {
@@ -151,6 +185,7 @@
       line-height: 1.6;
       margin-bottom: var(--spacing-lg);
       max-width: 26rem;
+      animation: fadeInUp 0.8s ease-out 240ms both;
     }
 
     .cta-button {
@@ -168,12 +203,13 @@
       border: none;
       cursor: pointer;
       letter-spacing: -0.01em;
+      animation: fadeInUp 0.8s ease-out 400ms both;
     }
 
     .cta-button:hover {
       background: var(--color-accent-hover);
-      transform: translateY(-2px);
-      box-shadow: 0 12px 24px rgba(14, 165, 233, 0.3);
+      transform: scale(1.03);
+      box-shadow: 0 20px 40px rgba(14, 165, 233, 0.4);
     }
 
     .cta-button:focus-visible {
@@ -182,7 +218,7 @@
     }
 
     .cta-button:active {
-      transform: translateY(0);
+      transform: scale(1);
     }
 
     /* Stats Card */
@@ -196,6 +232,8 @@
       border-radius: var(--radius-lg);
       backdrop-filter: blur(12px);
       width: clamp(16rem, 90vw, 20rem);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+      animation: fadeInUp 0.8s ease-out 400ms both;
     }
 
     .stats-grid {
@@ -222,6 +260,114 @@
       color: var(--color-text-secondary);
       text-transform: uppercase;
       letter-spacing: 0.05em;
+    }
+
+    .stats-caption {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--spacing-xs);
+      margin-top: var(--spacing-md);
+      padding-top: var(--spacing-md);
+      border-top: 1px solid rgba(255, 255, 255, 0.2);
+      font-size: 0.75rem;
+      color: var(--color-text-secondary);
+      letter-spacing: 0.05em;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #10b981;
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+      50% {
+        opacity: 0.6;
+        transform: scale(0.8);
+      }
+    }
+
+    /* Background Orbs */
+    .orb {
+      position: fixed;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.5;
+      filter: blur(80px);
+    }
+
+    .orb-top-right {
+      top: -10%;
+      right: -5%;
+      width: 50vw;
+      height: 50vw;
+      background: radial-gradient(circle, #b8d4ff, transparent);
+    }
+
+    .orb-bottom-left {
+      bottom: -10%;
+      left: -5%;
+      width: 50vw;
+      height: 50vw;
+      background: radial-gradient(circle, #d8c9f5, transparent);
+    }
+
+    /* Scroll Cue */
+    .scroll-cue {
+      position: fixed;
+      bottom: var(--spacing-lg);
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: var(--spacing-xs);
+      z-index: 10;
+      pointer-events: none;
+      animation: bob 3s ease-in-out infinite;
+    }
+
+    .scroll-line {
+      width: 1px;
+      height: 24px;
+      background: var(--color-text-secondary);
+      opacity: 0.5;
+    }
+
+    .scroll-text {
+      font-size: 0.625rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--color-text-secondary);
+      opacity: 0.6;
+    }
+
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(24px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes bob {
+      0%, 100% {
+        transform: translateX(-50%) translateY(0);
+      }
+      50% {
+        transform: translateX(-50%) translateY(8px);
+      }
     }
 
     /* Responsive */
@@ -281,6 +427,10 @@
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
       }
+
+      .scroll-cue {
+        display: none;
+      }
     }
 
     /* Loading indicator */
@@ -298,6 +448,9 @@
 <body>
   <canvas id="canvas"></canvas>
 
+  <div class="orb orb-top-right"></div>
+  <div class="orb orb-bottom-left"></div>
+
   <div class="content">
     <nav>
       <div class="logo">3D Kit</div>
@@ -310,6 +463,7 @@
 
     <section class="hero">
       <div class="hero-content">
+        <span class="eyebrow">WebGL Experience</span>
         <h1>Glass Hero</h1>
         <p class="subtitle">次世代の 3D ウェブ体験を、シンプルなコンセプトで実装。smooth interactions が特徴です。</p>
         <a href="#" class="cta-button">Explore</a>
@@ -331,6 +485,15 @@
           <div class="stat-label">Latency</div>
         </div>
       </div>
+      <div class="stats-caption">
+        <div class="status-dot"></div>
+        <span>リアルタイム計測</span>
+      </div>
+    </div>
+
+    <div class="scroll-cue">
+      <div class="scroll-line"></div>
+      <div class="scroll-text">Scroll</div>
     </div>
   </div>
 
@@ -382,9 +545,41 @@
     // Animation loop
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+    // Mouse parallax tracking
+    let mouseX = 0;
+    let mouseY = 0;
+    let targetRotationX = 0;
+    let targetRotationY = 0;
+    let currentRotationX = 0;
+    let currentRotationY = 0;
+    let autoRotationY = 0;
+
+    if (!prefersReducedMotion) {
+      document.addEventListener('pointermove', (e) => {
+        // Normalize to [-1, 1]
+        mouseX = (e.clientX / window.innerWidth) * 2 - 1;
+        mouseY = (e.clientY / window.innerHeight) * 2 - 1;
+
+        // Calculate target rotations with parallax intensity
+        targetRotationY = mouseX * 0.25;
+        targetRotationX = mouseY * 0.12;
+      });
+    }
+
     renderer.setAnimationLoop(() => {
-      if (model && !prefersReducedMotion) {
-        model.rotation.y += 0.003;
+      if (model) {
+        if (!prefersReducedMotion) {
+          // Accumulate auto-rotation
+          autoRotationY += 0.003;
+
+          // Lerp rotation toward target for smooth parallax
+          currentRotationY += (targetRotationY - currentRotationY) * 0.1;
+          currentRotationX += (targetRotationX - currentRotationX) * 0.1;
+
+          // Apply both auto-rotation and parallax
+          model.rotation.y = autoRotationY + currentRotationY;
+          model.rotation.x = currentRotationX;
+        }
       }
       renderer.render(scene, camera);
     });

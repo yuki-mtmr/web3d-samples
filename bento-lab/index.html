@@ -7,6 +7,7 @@
   <script type="importmap">
   {"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
   </script>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🍱</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Space+Grotesk:wght@500&display=swap" rel="stylesheet">
@@ -23,11 +24,28 @@
     }
 
     body {
-      background: #f5f0e6;
+      background:
+        radial-gradient(circle, rgba(0, 0, 0, 0.12) 1px, transparent 1px);
+      background-size: 22px 22px;
+      background-color: #f5f0e6;
       color: #000;
       font-family: 'Space Grotesk', system-ui, sans-serif;
       font-size: 16px;
       line-height: 1.5;
+    }
+
+    .header-strip {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-bottom: 2px solid #000;
+      font-family: 'Courier New', monospace;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-weight: 600;
+      margin-bottom: 2rem;
     }
 
     .container {
@@ -38,6 +56,7 @@
     .bento-grid {
       display: grid;
       grid-template-columns: repeat(6, 1fr);
+      grid-auto-flow: dense;
       gap: 1.5rem;
       margin: 0 auto;
     }
@@ -53,6 +72,41 @@
       display: flex;
       flex-direction: column;
       justify-content: space-between;
+      position: relative;
+      animation: pop-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+      animation-delay: 0ms;
+    }
+
+    .sticker-badge {
+      position: absolute;
+      top: -20px;
+      right: 20px;
+      width: 100px;
+      height: 100px;
+      border: 3px solid #000;
+      border-radius: 50%;
+      background: #ff5c00;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Courier New', monospace;
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-align: center;
+      color: #000;
+      transform: rotate(-8deg);
+      transition: transform 0.3s ease;
+      line-height: 1.2;
+    }
+
+    .cell-intro:hover .sticker-badge {
+      animation: wobble 0.5s ease-in-out infinite;
+    }
+
+    @keyframes wobble {
+      0%, 100% { transform: rotate(-8deg); }
+      25% { transform: rotate(-10deg); }
+      75% { transform: rotate(-6deg); }
     }
 
     .cell-intro h1 {
@@ -92,6 +146,9 @@
       box-shadow: 6px 6px 0 #000;
       overflow: hidden;
       transition: transform 0.2s ease, box-shadow 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      position: relative;
     }
 
     .cell-canvas:hover {
@@ -99,22 +156,74 @@
       box-shadow: 8px 8px 0 #000;
     }
 
+    .cell-canvas:hover .canvas-content {
+      transform: rotateZ(1deg);
+    }
+
+    .canvas-wrapper {
+      position: relative;
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .canvas-content {
+      width: 100%;
+      height: 100%;
+      transition: transform 0.2s ease;
+    }
+
+    .canvas-tag {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      background: #000;
+      color: #fff;
+      padding: 4px 8px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border: 1px solid #000;
+      z-index: 10;
+    }
+
+    .canvas-caption {
+      background: #f5f0e6;
+      padding: 0.75rem;
+      border-top: 2px solid #000;
+      font-family: 'Courier New', monospace;
+      font-size: 0.6rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #666;
+      line-height: 1.4;
+    }
+
     .canvas-1 {
-      grid-column: span 2;
+      grid-column: span 1;
       grid-row: span 2;
       aspect-ratio: 1;
+      animation: pop-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+      animation-delay: 60ms;
     }
 
     .canvas-2 {
       grid-column: span 2;
       grid-row: span 1;
       aspect-ratio: 2 / 1;
+      animation: pop-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+      animation-delay: 120ms;
     }
 
     .canvas-3 {
-      grid-column: span 2;
+      grid-column: span 1;
       grid-row: span 2;
       aspect-ratio: 1;
+      animation: pop-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+      animation-delay: 180ms;
     }
 
     canvas {
@@ -123,9 +232,122 @@
       height: 100%;
     }
 
+    /* Swatch cell */
+    .cell-swatch {
+      grid-column: span 6;
+      grid-row: span 1;
+      border: 3px solid #000;
+      background: #fff;
+      box-shadow: 6px 6px 0 #000;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      padding: 0;
+      overflow: hidden;
+      animation: pop-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+      animation-delay: 240ms;
+    }
+
+    .swatch-color {
+      aspect-ratio: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border: 2px solid #000;
+      font-family: 'Courier New', monospace;
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      gap: 0.5rem;
+    }
+
+    .swatch-color:nth-child(1) {
+      background: #ff5c00;
+      color: #fff;
+    }
+
+    .swatch-color:nth-child(2) {
+      background: #2b5bff;
+      color: #fff;
+    }
+
+    .swatch-color:nth-child(3) {
+      background: #f5f0e6;
+      color: #000;
+      border-left: none;
+      border-top: none;
+    }
+
+    .swatch-color:nth-child(4) {
+      background: #000;
+      color: #fff;
+      border-top: none;
+    }
+
+    /* Quote cell */
+    .cell-quote {
+      grid-column: span 6;
+      grid-row: span 1;
+      border: 3px solid #000;
+      padding: 2rem;
+      background: #fff;
+      box-shadow: 6px 6px 0 #000;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      animation: pop-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+      animation-delay: 300ms;
+    }
+
+    .quote-mark {
+      font-size: 4rem;
+      color: #ff5c00;
+      line-height: 1;
+      margin-bottom: 0.5rem;
+    }
+
+    .quote-text {
+      font-family: 'Archivo Black', system-ui, sans-serif;
+      font-size: 1.1rem;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: -0.01em;
+      line-height: 1.3;
+    }
+
+    /* CTA cell */
+    .cell-cta {
+      grid-column: span 6;
+      grid-row: span 1;
+      border: 3px solid #000;
+      background: #2b5bff;
+      color: #fff;
+      box-shadow: 6px 6px 0 #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+      font-family: 'Archivo Black', system-ui, sans-serif;
+      font-size: 1.3rem;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      transition: background-color 0.3s ease;
+      cursor: pointer;
+      animation: pop-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+      animation-delay: 360ms;
+    }
+
+    .cell-cta:hover {
+      background: #ff5c00;
+    }
+
     /* Stat cell */
     .cell-stat {
-      grid-column: span 2;
+      grid-column: span 1;
       grid-row: span 1;
       border: 3px solid #000;
       padding: 1.5rem;
@@ -136,6 +358,8 @@
       flex-direction: column;
       justify-content: center;
       align-items: center;
+      animation: pop-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+      animation-delay: 150ms;
     }
 
     .cell-stat .number {
@@ -152,7 +376,7 @@
       margin-top: 0.5rem;
     }
 
-    /* Marquee cell */
+    /* Marquee cells */
     .cell-marquee {
       grid-column: span 6;
       border: 3px solid #000;
@@ -163,6 +387,15 @@
       height: 80px;
       display: flex;
       align-items: center;
+      animation: pop-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    }
+
+    /* :first-of-type/:nth-of-type match by tag among ALL sibling divs, not by
+       class — use an adjacent-sibling selector to target the second marquee */
+    .cell-marquee + .cell-marquee {
+      animation-delay: 480ms;
+      background: #fff;
+      color: #000;
     }
 
     .marquee-content {
@@ -175,23 +408,64 @@
       letter-spacing: 0.05em;
     }
 
+    .marquee-content-reverse {
+      animation: scroll-right 20s linear infinite;
+      -webkit-text-stroke: 1px #000;
+      color: transparent;
+    }
+
     .marquee-item {
       padding: 0 2rem;
     }
 
+    /* content holds two identical item groups — sliding exactly half its own
+       width then looping reads as a seamless, gap-free marquee */
     @keyframes scroll-left {
       0% {
-        transform: translateX(100%);
+        transform: translateX(0);
       }
       100% {
-        transform: translateX(-100%);
+        transform: translateX(-50%);
+      }
+    }
+
+    @keyframes scroll-right {
+      0% {
+        transform: translateX(-50%);
+      }
+      100% {
+        transform: translateX(0);
+      }
+    }
+
+    @keyframes pop-in {
+      from {
+        transform: scale(0.96);
+        opacity: 0;
+      }
+      to {
+        transform: scale(1);
+        opacity: 1;
       }
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .marquee-content {
+      .marquee-content,
+      .marquee-content-reverse {
         animation: none;
         transform: translateX(0);
+      }
+
+      .cell-intro,
+      .canvas-1,
+      .canvas-2,
+      .canvas-3,
+      .cell-stat,
+      .cell-swatch,
+      .cell-quote,
+      .cell-cta,
+      .cell-marquee {
+        animation: none;
       }
     }
 
@@ -200,6 +474,11 @@
       .bento-grid {
         grid-template-columns: repeat(2, 1fr);
         gap: 1rem;
+      }
+
+      .header-strip {
+        padding: 0.75rem 1.5rem;
+        font-size: 0.65rem;
       }
 
       .cell-intro {
@@ -212,6 +491,14 @@
         font-size: 2rem;
       }
 
+      .sticker-badge {
+        width: 80px;
+        height: 80px;
+        top: -15px;
+        right: 15px;
+        font-size: 0.55rem;
+      }
+
       .canvas-1, .canvas-2, .canvas-3 {
         grid-column: span 2;
         grid-row: span 1;
@@ -219,6 +506,18 @@
       }
 
       .cell-stat {
+        grid-column: span 1;
+      }
+
+      .cell-swatch {
+        grid-column: span 2;
+      }
+
+      .cell-quote {
+        grid-column: span 2;
+      }
+
+      .cell-cta {
         grid-column: span 2;
       }
 
@@ -232,7 +531,7 @@
         grid-template-columns: 1fr;
       }
 
-      .cell-intro, .canvas-1, .canvas-2, .canvas-3, .cell-stat, .cell-marquee {
+      .cell-intro, .canvas-1, .canvas-2, .canvas-3, .cell-stat, .cell-swatch, .cell-quote, .cell-cta, .cell-marquee {
         grid-column: span 1;
       }
 
@@ -243,14 +542,25 @@
       .cell-stat .number {
         font-size: 2.5rem;
       }
+
+      .sticker-badge {
+        width: 70px;
+        height: 70px;
+        font-size: 0.5rem;
+      }
     }
   </style>
 </head>
 <body>
+  <div class="header-strip">
+    <span>WEB3D-KIT / SPECIMEN SHEET</span>
+    <span>NO. 003</span>
+  </div>
   <div class="container">
     <div class="bento-grid">
       <!-- Intro Cell -->
       <div class="cell-intro">
+        <div class="sticker-badge">3D INSIDE ★</div>
         <div>
           <h1>Web3D Kit</h1>
           <p class="subtext">
@@ -266,12 +576,29 @@
 
       <!-- Canvas 1: Wireframe Icosahedron -->
       <div class="cell-canvas canvas-1">
-        <canvas id="canvas-1"></canvas>
+        <div class="canvas-wrapper">
+          <div class="canvas-content">
+            <canvas id="canvas-1"></canvas>
+          </div>
+          <div class="canvas-tag">01 WIREFRAME</div>
+        </div>
+        <div class="canvas-caption">
+          Faces: 20<br>
+          Verts: 12
+        </div>
       </div>
 
       <!-- Canvas 2: Torus -->
       <div class="cell-canvas canvas-2">
-        <canvas id="canvas-2"></canvas>
+        <div class="canvas-wrapper">
+          <div class="canvas-content">
+            <canvas id="canvas-2"></canvas>
+          </div>
+          <div class="canvas-tag">02 NORMALS</div>
+        </div>
+        <div class="canvas-caption">
+          Segments: 32 | Tubes: 16
+        </div>
       </div>
 
       <!-- Stat Cell -->
@@ -282,7 +609,47 @@
 
       <!-- Canvas 3: Cube Grid -->
       <div class="cell-canvas canvas-3">
-        <canvas id="canvas-3"></canvas>
+        <div class="canvas-wrapper">
+          <div class="canvas-content">
+            <canvas id="canvas-3"></canvas>
+          </div>
+          <div class="canvas-tag">03 INSTANCED</div>
+        </div>
+        <div class="canvas-caption">
+          Instances: 27<br>
+          Geometry: BoxGeometry
+        </div>
+      </div>
+
+      <!-- Swatch Cell -->
+      <div class="cell-swatch">
+        <div class="swatch-color">
+          <span>#FF5C00</span>
+          <span>Accent</span>
+        </div>
+        <div class="swatch-color">
+          <span>#2B5BFF</span>
+          <span>Primary</span>
+        </div>
+        <div class="swatch-color">
+          <span>#F5F0E6</span>
+          <span>Cream</span>
+        </div>
+        <div class="swatch-color">
+          <span>#000000</span>
+          <span>Black</span>
+        </div>
+      </div>
+
+      <!-- Quote Cell -->
+      <div class="cell-quote">
+        <div class="quote-mark">"</div>
+        <div class="quote-text">Form follows function, but brutalism doesn't follow anyone.</div>
+      </div>
+
+      <!-- CTA Cell -->
+      <div class="cell-cta">
+        GET THE KIT →
       </div>
 
       <!-- Marquee Cell -->
@@ -298,6 +665,22 @@
           <div class="marquee-item">● GENERATIVE ●</div>
           <div class="marquee-item">● WEB3D ●</div>
           <div class="marquee-item">● FORM OVER FUNCTION ●</div>
+        </div>
+      </div>
+
+      <!-- Second Marquee Cell (Reversed) -->
+      <div class="cell-marquee">
+        <div class="marquee-content marquee-content-reverse">
+          <div class="marquee-item">● MODULAR ●</div>
+          <div class="marquee-item">● RESPONSIVE ●</div>
+          <div class="marquee-item">● INTERACTIVE ●</div>
+          <div class="marquee-item">● SHADER ●</div>
+          <div class="marquee-item">● REAL-TIME ●</div>
+          <div class="marquee-item">● MODULAR ●</div>
+          <div class="marquee-item">● RESPONSIVE ●</div>
+          <div class="marquee-item">● INTERACTIVE ●</div>
+          <div class="marquee-item">● SHADER ●</div>
+          <div class="marquee-item">● REAL-TIME ●</div>
         </div>
       </div>
     </div>
