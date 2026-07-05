@@ -16,6 +16,7 @@ python3 -m http.server 8770
 
 | サイト | デザイン方向性 | 3D 技法 |
 |---|---|---|
+| `ennichi/` | 和・縁日の夜（没入体験） | Canvas 手続きテクスチャ（提灯「祭」・縦書き看板・紅白幕）、花火パーティクル、WebAudio 祭囃子合成、自動散策カメラ + 見回し |
 | `glass-hero/` | ガラスモーフィズム（ライト） | Draco 圧縮 GLB + KHR transmission + RoomEnvironment |
 | `particle-field/` | ダークラグジュアリー | 12,000 頂点の Points 波動 + マウス視差 |
 | `scrolly-story/` | エディトリアル / Swiss | スクロール進捗で回転・ドリー・色補間を駆動 |
