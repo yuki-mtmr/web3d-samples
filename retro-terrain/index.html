@@ -448,6 +448,19 @@
     const baseTerrainColor = new THREE.Color(0xff2bd6);
     const pulseTargetColor = new THREE.Color(0x22e5ff);
 
+    // Mouse parallax — banking the camera with the pointer keeps the flythrough
+    // feeling responsive instead of purely passive
+    const CAM_BASE = { x: 0, y: 2.4 };
+    let camTargetX = CAM_BASE.x;
+    let camTargetY = CAM_BASE.y;
+    window.addEventListener('pointermove', (e) => {
+      if (reducedMotion) return;
+      const nx = (e.clientX / window.innerWidth) * 2 - 1;
+      const ny = (e.clientY / window.innerHeight) * 2 - 1;
+      camTargetX = CAM_BASE.x + nx * 1.4;
+      camTargetY = CAM_BASE.y - ny * 0.5;
+    });
+
     renderer.setAnimationLoop((time) => {
       frameCount++;
 
@@ -475,6 +488,11 @@
         const pulseStrength = Math.sin(pulseCycle * Math.PI) * 0.3;
         terrainMat.color.copy(baseTerrainColor).lerp(pulseTargetColor, pulseStrength);
       }
+
+      // Apply mouse parallax (0.12 = tight, stress-free tracking)
+      camera.position.x += (camTargetX - camera.position.x) * 0.12;
+      camera.position.y += (camTargetY - camera.position.y) * 0.12;
+      camera.lookAt(0, 0.6, -14);
 
       // Update HUD
       const speed = (42.7 + Math.sin(Date.now() * 0.0003) * 5).toFixed(1);

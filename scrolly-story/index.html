@@ -144,7 +144,7 @@
             font-weight: 600;
             letter-spacing: 0.1em;
             cursor: pointer;
-            transition: all 0.3s ease;
+            transition: all 0.15s ease-out;
             text-transform: uppercase;
             margin-bottom: 2rem;
         }
@@ -179,7 +179,7 @@
             border-radius: 50%;
             background-color: #4a7c9e;
             cursor: pointer;
-            transition: all 0.3s ease;
+            transition: all 0.15s ease-out;
             scroll-behavior: smooth;
         }
 
@@ -420,7 +420,7 @@
         let currentCameraZ = 5;
         let currentCameraY = 0.5;
         const currentColor = new THREE.Color(0x4a7c9e);
-        const lerpFactor = 0.08;
+        const lerpFactor = 0.16;
 
         function lerp(a, b, t) {
             return a + (b - a) * t;

@@ -112,7 +112,7 @@
       font-size: clamp(0.75rem, 1.5vw, 0.875rem);
       color: var(--color-text-secondary);
       text-decoration: none;
-      transition: color 0.3s ease;
+      transition: color 0.15s ease-out;
       position: relative;
     }
 
@@ -126,7 +126,7 @@
       background: var(--color-accent);
       transform: scaleX(0);
       transform-origin: left;
-      transition: transform 0.3s ease;
+      transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     nav a:hover::after,
@@ -199,7 +199,7 @@
       border-radius: var(--radius-lg);
       font-size: clamp(0.875rem, 1.5vw, 1rem);
       font-weight: 600;
-      transition: all 0.3s ease;
+      transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), background 0.15s ease-out, box-shadow 0.18s ease-out;
       border: none;
       cursor: pointer;
       letter-spacing: -0.01em;
@@ -561,8 +561,8 @@
         mouseY = (e.clientY / window.innerHeight) * 2 - 1;
 
         // Calculate target rotations with parallax intensity
-        targetRotationY = mouseX * 0.25;
-        targetRotationX = mouseY * 0.12;
+        targetRotationY = mouseX * 0.38;
+        targetRotationX = mouseY * 0.18;
       });
     }
 
@@ -573,8 +573,9 @@
           autoRotationY += 0.003;
 
           // Lerp rotation toward target for smooth parallax
-          currentRotationY += (targetRotationY - currentRotationY) * 0.1;
-          currentRotationX += (targetRotationX - currentRotationX) * 0.1;
+          // 0.2 tracks the pointer tightly; lower values feel laggy
+          currentRotationY += (targetRotationY - currentRotationY) * 0.2;
+          currentRotationX += (targetRotationX - currentRotationX) * 0.2;
 
           // Apply both auto-rotation and parallax
           model.rotation.y = autoRotationY + currentRotationY;
