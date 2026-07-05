@@ -45,6 +45,20 @@
     color: var(--ink);
     text-shadow: 0 0 24px rgba(224, 67, 45, 0.55), 0 0 60px rgba(232, 176, 75, 0.3);
   }
+  /* 落款（はんこ） */
+  .seal {
+    display: inline-block;
+    writing-mode: horizontal-tb;
+    font-family: 'Yuji Syuku', serif;
+    background: var(--aka);
+    color: var(--ink);
+    font-size: 0.9rem;
+    padding: 0.35em 0.4em;
+    border-radius: 3px;
+    margin-top: 1.4em;
+    letter-spacing: 0;
+    box-shadow: 0 0 14px rgba(224, 67, 45, 0.5);
+  }
   .title-block .sub {
     font-size: clamp(0.8rem, 1.8vh, 1rem);
     letter-spacing: 0.5em;
@@ -130,6 +144,7 @@
 <div class="title-block">
   <h1>縁日</h1>
   <span class="sub">— 夏祭りの夜、参道にて —</span>
+  <span class="seal">祭</span>
 </div>
 
 <div class="caption">
@@ -312,7 +327,8 @@ const lanternMat = new THREE.MeshStandardMaterial({
 const capGeo = new THREE.CylinderGeometry(0.16, 0.2, 0.07, 12);
 const capMat = new THREE.MeshStandardMaterial({ color: 0x14100c, roughness: 0.8 });
 
-const swayGroups = [];  // { group, phase }
+const swayGroups = [];     // { group, phase }
+const lanternPoints = [];  // 蛾の誘引先（提灯のワールド座標）
 
 function lanternString(z, count = 7, height = 3.6) {
   const group = new THREE.Group();
@@ -328,6 +344,7 @@ function lanternString(z, count = 7, height = 3.6) {
     const lantern = new THREE.Mesh(lanternGeo, lanternMat);
     lantern.position.set(x, y - 0.42, 0);
     group.add(lantern);
+    lanternPoints.push(new THREE.Vector3(x, y - 0.42, z));
 
     const capTop = new THREE.Mesh(capGeo, capMat);
     capTop.position.set(x, y - 0.12, 0);
@@ -377,7 +394,8 @@ const stallInnerMat = new THREE.MeshStandardMaterial({
 });
 const kouhakuMat = new THREE.MeshStandardMaterial({ map: kouhakuTex, roughness: 0.9, side: THREE.DoubleSide });
 
-function stall(x, z, nameChars, flip) {
+/* 屋台はローカル +z を正面に組み、グループ回転で参道側へ向ける */
+function stall(x, z, nameChars, side) {
   const s = new THREE.Group();
 
   // 本体（奥に光る営業中の腹）
@@ -385,33 +403,31 @@ function stall(x, z, nameChars, flip) {
   body.position.y = 1.05;
   s.add(body);
   const innerGlow = new THREE.Mesh(new THREE.PlaneGeometry(2.9, 1.5), stallInnerMat);
-  innerGlow.position.set(0, 1.15, flip ? -1.12 : 1.12);
-  if (flip) innerGlow.rotation.y = Math.PI;
+  innerGlow.position.set(0, 1.15, 1.12);
   s.add(innerGlow);
 
   // 屋根（前傾）
   const roof = new THREE.Mesh(new THREE.BoxGeometry(3.7, 0.12, 2.9), stallRoofMat);
-  roof.position.set(0, 2.35, flip ? -0.25 : 0.25);
-  roof.rotation.x = flip ? 0.16 : -0.16;
+  roof.position.set(0, 2.35, 0.25);
+  roof.rotation.x = -0.16;
   s.add(roof);
 
   // 紅白幕（屋根の縁）
   const maku = new THREE.Mesh(new THREE.PlaneGeometry(3.7, 0.5), kouhakuMat);
-  maku.position.set(0, 2.12, flip ? -1.55 : 1.55);
-  if (flip) maku.rotation.y = Math.PI;
+  maku.position.set(0, 2.12, 1.55);
   s.add(maku);
 
   // 縦看板
+  const signTex = signTexture(nameChars);
   const sign = new THREE.Mesh(
     new THREE.PlaneGeometry(0.55, 2.1),
     new THREE.MeshStandardMaterial({
-      map: signTexture(nameChars),
-      emissive: 0xffffff, emissiveMap: signTexture(nameChars), emissiveIntensity: 0.28,
+      map: signTex,
+      emissive: 0xffffff, emissiveMap: signTex, emissiveIntensity: 0.28,
       roughness: 0.9,
     })
   );
-  sign.position.set(flip ? 1.45 : -1.45, 1.5, flip ? -1.16 : 1.16);
-  if (flip) sign.rotation.y = Math.PI;
+  sign.position.set(-1.45, 1.5, 1.16);
   s.add(sign);
 
   // 店先の裸電球
@@ -420,18 +436,315 @@ function stall(x, z, nameChars, flip) {
     blending: THREE.AdditiveBlending, depthWrite: false,
   }));
   bulbGlow.scale.setScalar(1.4);
-  bulbGlow.position.set(0.5, 2.0, flip ? -1.5 : 1.5);
+  bulbGlow.position.set(0.5, 2.0, 1.5);
   s.add(bulbGlow);
 
   s.position.set(x, 0, z);
+  // 左列(side=-1)は +x（参道中央）、右列(side=1)は -x を向く
+  s.rotation.y = -side * Math.PI / 2;
   scene.add(s);
 }
 
 stallNames.forEach((name, i) => {
   const side = i % 2 === 0 ? -1 : 1;              // 左右交互
   const z = 6 - Math.floor(i / 2) * 9.5 - (i % 2) * 4.5;
-  stall(side * 5.4, z, name, side > 0);
+  stall(side * 5.4, z, name, side);
 });
+
+/* 屋台の位置を再導出（商品・人影の配置に使う）
+   正面は参道中央向きなので、店先はモール内側の x 方向 */
+function stallSpot(i) {
+  const side = i % 2 === 0 ? -1 : 1;
+  const z = 6 - Math.floor(i / 2) * 9.5 - (i % 2) * 4.5;
+  return { x: side * 5.4, z, side, frontX: side * 5.4 - side * 1.6 };
+}
+
+/* ────────────────────────────────
+   細部 1 — 屋台の商品
+──────────────────────────────── */
+const counterMat = new THREE.MeshStandardMaterial({ color: 0x4a3423, roughness: 0.85 });
+function counter(x, z) {
+  // 店先は参道向きなので、台の長辺は通りに沿わせる（z 方向）
+  const table = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.1, 2.0), counterMat);
+  table.position.set(x, 0.78, z);
+  scene.add(table);
+  return table;
+}
+
+/* 金魚すくい — 水槽と泳ぐ金魚 */
+const goldfish = [];  // { mesh, cx, cz, r, speed, ph }
+{
+  const s = stallSpot(0);
+  counter(s.frontX, s.z);
+  const tank = new THREE.Mesh(
+    new THREE.BoxGeometry(0.7, 0.36, 1.7),
+    new THREE.MeshStandardMaterial({ color: 0x8fd8ff, transparent: true, opacity: 0.28, roughness: 0.15 })
+  );
+  tank.position.set(s.frontX, 1.02, s.z);
+  scene.add(tank);
+  const water = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.62, 1.62),
+    new THREE.MeshStandardMaterial({ color: 0x5ab8e8, transparent: true, opacity: 0.5, roughness: 0.1 })
+  );
+  water.rotation.x = -Math.PI / 2;
+  water.position.set(s.frontX, 1.16, s.z);
+  scene.add(water);
+  const fishGeo = new THREE.SphereGeometry(0.05, 8, 6);
+  fishGeo.scale(1.6, 0.8, 0.8);
+  const fishMat = new THREE.MeshStandardMaterial({ color: 0xff5a2a, emissive: 0x992200, emissiveIntensity: 0.4, roughness: 0.5 });
+  for (let i = 0; i < 7; i++) {
+    const f = new THREE.Mesh(fishGeo, fishMat);
+    scene.add(f);
+    goldfish.push({
+      mesh: f, cx: s.frontX, cz: s.z,
+      r: 0.18 + Math.random() * 0.5,
+      speed: 0.5 + Math.random() * 0.8,
+      ph: Math.random() * Math.PI * 2,
+    });
+  }
+}
+
+/* りんご飴 — 台に刺さった飴の列 */
+{
+  const s = stallSpot(4);
+  counter(s.frontX, s.z);
+  const stickMat = new THREE.MeshStandardMaterial({ color: 0xd8c8a8, roughness: 0.9 });
+  const candyMat = new THREE.MeshStandardMaterial({
+    color: 0xc41a1a, emissive: 0x550505, emissiveIntensity: 0.5, roughness: 0.12,
+  });
+  for (let row = 0; row < 2; row++) {
+    for (let col = 0; col < 6; col++) {
+      const x = s.frontX - 0.18 + row * 0.36;
+      const z = s.z - 0.75 + col * 0.3;
+      const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.3, 6), stickMat);
+      stick.position.set(x, 0.97, z);
+      scene.add(stick);
+      const candy = new THREE.Mesh(new THREE.SphereGeometry(0.085, 12, 10), candyMat);
+      candy.position.set(x, 1.14, z);
+      scene.add(candy);
+    }
+  }
+}
+
+/* ヨーヨー釣り — 桶に浮かぶ色とりどりのヨーヨー */
+{
+  const s = stallSpot(5);
+  const tub = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.85, 0.7, 0.4, 20),
+    new THREE.MeshStandardMaterial({ color: 0x3a6ea8, roughness: 0.6 })
+  );
+  tub.position.set(s.frontX, 0.2, s.z);
+  scene.add(tub);
+  const tubWater = new THREE.Mesh(
+    new THREE.CircleGeometry(0.8, 20),
+    new THREE.MeshStandardMaterial({ color: 0x6ac0e8, transparent: true, opacity: 0.6, roughness: 0.1 })
+  );
+  tubWater.rotation.x = -Math.PI / 2;
+  tubWater.position.set(s.frontX, 0.38, s.z);
+  scene.add(tubWater);
+  const yoyoColors = [0xff4a6a, 0x4aa8ff, 0xffd24a, 0x7aff8a, 0xda6aff, 0xff8a3a];
+  yoyoColors.forEach((c, i) => {
+    const yo = new THREE.Mesh(
+      new THREE.SphereGeometry(0.11, 12, 10),
+      new THREE.MeshStandardMaterial({ color: c, roughness: 0.2, emissive: c, emissiveIntensity: 0.12 })
+    );
+    const a = (i / yoyoColors.length) * Math.PI * 2;
+    yo.position.set(s.frontX + Math.cos(a) * 0.42, 0.42, s.z + Math.sin(a) * 0.42);
+    scene.add(yo);
+  });
+}
+
+/* かき氷 — 「氷」のぼり旗（風にはためく） */
+const noboris = [];  // { mesh, base }
+{
+  const s = stallSpot(3);
+  const poleX = s.frontX;
+  const poleZ = s.z - 2.1;   // 店の脇（通り沿い）に立てる
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.03, 0.03, 3.4, 8),
+    new THREE.MeshStandardMaterial({ color: 0x5a4632, roughness: 0.9 })
+  );
+  pole.position.set(poleX, 1.7, poleZ);
+  scene.add(pole);
+
+  const noboriTex = canvasTexture(128, 512, (g, w, h) => {
+    g.fillStyle = '#f3ead8';
+    g.fillRect(0, 0, w, h);
+    // 波の意匠
+    g.fillStyle = '#3a6ea8';
+    g.beginPath();
+    for (let x = 0; x <= w; x += 4) {
+      g.lineTo(x, h - 46 + Math.sin(x * 0.12) * 10);
+    }
+    g.lineTo(w, h); g.lineTo(0, h);
+    g.closePath(); g.fill();
+    g.fillStyle = '#c22a18';
+    g.font = '900 100px "Yuji Syuku", "Hiragino Mincho ProN", serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('氷', w / 2, h * 0.32);
+  });
+  const noboriGeo = new THREE.PlaneGeometry(0.6, 2.3, 8, 20);
+  const nobori = new THREE.Mesh(noboriGeo, new THREE.MeshStandardMaterial({
+    map: noboriTex, side: THREE.DoubleSide, roughness: 0.9,
+    emissive: 0xffffff, emissiveMap: noboriTex, emissiveIntensity: 0.18,
+  }));
+  nobori.rotation.y = Math.PI / 2;      // 参道から読める向きに
+  nobori.position.set(poleX, 2.2, poleZ + 0.33);
+  scene.add(nobori);
+  noboris.push({ mesh: nobori, base: Float32Array.from(noboriGeo.attributes.position.array) });
+}
+
+/* ────────────────────────────────
+   細部 2 — 参道の奥に立つ鳥居
+──────────────────────────────── */
+{
+  const torii = new THREE.Group();
+  const red = new THREE.MeshStandardMaterial({
+    color: 0xc22a18, emissive: 0x551408, emissiveIntensity: 0.45, roughness: 0.6,
+  });
+  const pillarGeo = new THREE.CylinderGeometry(0.3, 0.36, 6.2, 14);
+  for (const px of [-3.6, 3.6]) {
+    const p = new THREE.Mesh(pillarGeo, red);
+    p.position.set(px, 3.1, 0);
+    torii.add(p);
+  }
+  const kasagi = new THREE.Mesh(new THREE.BoxGeometry(9.6, 0.55, 0.7), red);
+  kasagi.position.y = 6.2;
+  torii.add(kasagi);
+  const shimaki = new THREE.Mesh(new THREE.BoxGeometry(8.6, 0.35, 0.6), red);
+  shimaki.position.y = 5.75;
+  torii.add(shimaki);
+  const nuki = new THREE.Mesh(new THREE.BoxGeometry(8.4, 0.3, 0.45), red);
+  nuki.position.y = 4.4;
+  torii.add(nuki);
+  const gakuTex = signTexture(['祭'], '#1c0b06', '#e8b04b', '#e8b04b');
+  const gaku = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 1.0),
+    new THREE.MeshStandardMaterial({ map: gakuTex, emissive: 0xffffff, emissiveMap: gakuTex, emissiveIntensity: 0.3 }));
+  gaku.position.set(0, 5.05, 0.3);
+  torii.add(gaku);
+  torii.position.set(0, 0, -42);
+  scene.add(torii);
+  // 鳥居の足元をほのかに照らす
+  const tLight = new THREE.PointLight(0xff9a4d, 10, 14, 1.6);
+  tLight.position.set(0, 2.5, -40);
+  scene.add(tLight);
+}
+
+/* ────────────────────────────────
+   細部 3 — 人影（屋台を眺める祭り客）
+──────────────────────────────── */
+const figures = [];  // { group, ph }
+{
+  const figMat = new THREE.MeshStandardMaterial({ color: 0x0e0a16, roughness: 0.95 });
+  function figure(x, z, scale, faceX, faceZ) {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.23, 0.95, 10), figMat);
+    body.position.y = 0.62;
+    g.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 8), figMat);
+    head.position.y = 1.24;
+    g.add(head);
+    g.scale.setScalar(scale);
+    g.position.set(x, 0, z);
+    g.lookAt(faceX, 0, faceZ);
+    scene.add(g);
+    figures.push({ group: g, ph: Math.random() * Math.PI * 2 });
+  }
+  const s0 = stallSpot(0);  // 金魚すくいに子どもふたり（店先にしゃがむ距離感）
+  figure(s0.frontX - s0.side * 0.9, s0.z - 0.45, 0.62, s0.x, s0.z);
+  figure(s0.frontX - s0.side * 0.8, s0.z + 0.55, 0.55, s0.x, s0.z);
+  const s1 = stallSpot(1);  // 射的に大人
+  figure(s1.frontX - s1.side * 1.0, s1.z + 0.2, 1.0, s1.x, s1.z);
+  const s2 = stallSpot(2);  // たこ焼きに二人連れ
+  figure(s2.frontX - s2.side * 1.1, s2.z - 0.5, 0.96, s2.x, s2.z);
+  figure(s2.frontX - s2.side * 1.2, s2.z + 0.35, 0.9, s2.x, s2.z);
+}
+
+/* ────────────────────────────────
+   細部 4 — 空気感（蛾・火の粉・光だまり・雲）
+──────────────────────────────── */
+/* 提灯に集まる蛾 */
+const moths = [];
+{
+  const mothMat = new THREE.SpriteMaterial({
+    map: sparkTex, color: 0xffe0b0, transparent: true, opacity: 0.5,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  for (let i = 0; i < 70; i++) {
+    const target = lanternPoints[Math.random() * lanternPoints.length | 0];
+    const m = new THREE.Sprite(mothMat.clone());
+    m.scale.setScalar(0.05 + Math.random() * 0.04);
+    scene.add(m);
+    moths.push({
+      sprite: m, c: target,
+      r: 0.4 + Math.random() * 0.35,
+      s1: 1.2 + Math.random() * 2.2,
+      s2: 2.0 + Math.random() * 3.0,
+      ph: Math.random() * Math.PI * 2,
+    });
+  }
+}
+
+/* 漂う火の粉 */
+let emberPoints, emberVel;
+{
+  const n = 60;
+  const pos = new Float32Array(n * 3);
+  emberVel = [];
+  for (let i = 0; i < n; i++) {
+    pos[i*3]   = (Math.random() - 0.5) * 14;
+    pos[i*3+1] = Math.random() * 4;
+    pos[i*3+2] = 12 - Math.random() * 46;
+    emberVel.push(0.15 + Math.random() * 0.3);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  emberPoints = new THREE.Points(geo, new THREE.PointsMaterial({
+    size: 0.06, map: sparkTex, color: 0xffb060, transparent: true, opacity: 0.7,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  }));
+  scene.add(emberPoints);
+}
+
+/* 提灯の下の光だまり */
+{
+  const poolTex = glowTexture('rgba(255, 160, 70, 0.30)', 'rgba(255, 110, 40, 0.10)');
+  const poolMat = new THREE.MeshBasicMaterial({
+    map: poolTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  for (let z = 10; z >= -34; z -= 4.5) {
+    const pool = new THREE.Mesh(new THREE.PlaneGeometry(9, 5), poolMat);
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.set(0, 0.02, z);
+    scene.add(pool);
+  }
+}
+
+/* 月にかかる流れ雲 */
+const clouds = [];
+{
+  const cloudTex = canvasTexture(256, 128, (g, w, h) => {
+    for (let i = 0; i < 26; i++) {
+      const grad = g.createRadialGradient(
+        Math.random() * w, h/2 + (Math.random()-0.5) * h * 0.5, 2,
+        Math.random() * w, h/2, 26 + Math.random() * 30
+      );
+      grad.addColorStop(0, 'rgba(190, 195, 220, 0.10)');
+      grad.addColorStop(1, 'rgba(190, 195, 220, 0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, w, h);
+    }
+  });
+  for (let i = 0; i < 3; i++) {
+    const cloud = new THREE.Mesh(
+      new THREE.PlaneGeometry(34, 12),
+      new THREE.MeshBasicMaterial({ map: cloudTex, transparent: true, opacity: 0.8, depthWrite: false, fog: false })
+    );
+    cloud.position.set(-30 + i * 26, 22 + i * 4, -68 - i * 3);
+    scene.add(cloud);
+    clouds.push({ mesh: cloud, speed: 0.25 + i * 0.12 });
+  }
+}
 
 /* ────────────────────────────────
    夜空 — 星と月
@@ -597,6 +910,57 @@ function makeAudio() {
     osc.start(time); osc.stop(time + 0.55);
   }
 
+  // 風鈴 — 高い倍音のチリンを時折
+  function furin(time) {
+    for (const [ratio, vol] of [[1, 0.045], [2.76, 0.02], [5.4, 0.008]]) {
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = 3140 * ratio * (0.98 + Math.random() * 0.04);
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(vol, time);
+      gain.gain.exponentialRampToValueAtTime(0.0005, time + 1.8);
+      osc.connect(gain).connect(master);
+      osc.start(time); osc.stop(time + 1.9);
+    }
+  }
+  setInterval(() => {
+    if (audioOn && Math.random() < 0.65) furin(audioCtx.currentTime + Math.random() * 2);
+  }, 7000);
+
+  // 篠笛 — 律音階の短い旋律をときどき
+  const FUE_SCALE = [587.33, 659.25, 783.99, 880.0, 987.77, 1174.66];
+  function fuePhrase(time) {
+    let tCur = time;
+    const len = 5 + (Math.random() * 3 | 0);
+    let idx = 2 + (Math.random() * 2 | 0);
+    for (let i = 0; i < len; i++) {
+      idx = Math.max(0, Math.min(FUE_SCALE.length - 1, idx + (Math.random() * 3 | 0) - 1));
+      const dur = i === len - 1 ? 0.9 : [0.22, 0.32, 0.45][Math.random() * 3 | 0];
+      const osc = audioCtx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = FUE_SCALE[idx];
+      const vib = audioCtx.createOscillator();
+      vib.frequency.value = 5.5;
+      const vibGain = audioCtx.createGain();
+      vibGain.gain.value = 5;
+      vib.connect(vibGain).connect(osc.frequency);
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 2600;
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(0.0001, tCur);
+      gain.gain.exponentialRampToValueAtTime(0.055, tCur + 0.05);
+      gain.gain.setValueAtTime(0.055, tCur + dur - 0.06);
+      gain.gain.exponentialRampToValueAtTime(0.0005, tCur + dur);
+      osc.connect(lp).connect(gain).connect(master);
+      vib.start(tCur); vib.stop(tCur + dur);
+      osc.start(tCur); osc.stop(tCur + dur);
+      tCur += dur + 0.02;
+    }
+  }
+  setInterval(() => {
+    if (audioOn && Math.random() < 0.7) fuePhrase(audioCtx.currentTime + 0.2);
+  }, 12000);
+
   // 「ドン・ドン・カッ・ドン | ドン・カッ・カッ・チン」を先読みスケジュール
   const BEAT = 0.42;
   let bar = 0, nextBarTime = audioCtx.currentTime + 0.1;
@@ -663,6 +1027,61 @@ renderer.setAnimationLoop(() => {
   if (!reducedMotion) {
     for (const { group, phase } of swayGroups) {
       group.rotation.z = Math.sin(t * 0.7 + phase) * 0.022;
+    }
+
+    // 金魚 — 水槽（長辺 z 方向）の中をゆっくり回遊
+    for (const f of goldfish) {
+      const a = t * f.speed + f.ph;
+      f.mesh.position.set(
+        f.cx + Math.cos(a) * f.r * 0.32,
+        1.05 + Math.sin(t * 1.7 + f.ph) * 0.02,
+        f.cz + Math.sin(a) * f.r
+      );
+      f.mesh.rotation.y = Math.atan2(Math.cos(a) * f.r, -Math.sin(a) * f.r * 0.32);
+    }
+
+    // のぼり旗 — 風のはためき（上端固定・裾ほど大きく揺れる）
+    for (const { mesh, base } of noboris) {
+      const p = mesh.geometry.attributes.position;
+      for (let i = 0; i < p.count; i++) {
+        const bx = base[i*3], by = base[i*3+1];
+        const droop = (1.15 - by) / 2.3;       // 上端 0 → 裾 1
+        p.array[i*3+2] = Math.sin(by * 3.2 + t * 3.4) * 0.12 * droop
+                       + Math.sin(bx * 5.0 + t * 5.2) * 0.05 * droop;
+      }
+      p.needsUpdate = true;
+      mesh.geometry.computeVertexNormals();
+    }
+
+    // 蛾 — 提灯のまわりを不規則に舞う
+    for (const m of moths) {
+      m.sprite.position.set(
+        m.c.x + Math.sin(t * m.s1 + m.ph) * m.r,
+        m.c.y + Math.sin(t * m.s2 + m.ph * 2) * 0.2,
+        m.c.z + Math.cos(t * m.s1 + m.ph) * m.r * 0.5
+      );
+    }
+
+    // 火の粉 — ゆらゆら上昇して消える
+    {
+      const p = emberPoints.geometry.attributes.position;
+      for (let i = 0; i < emberVel.length; i++) {
+        p.array[i*3+1] += emberVel[i] * dt;
+        p.array[i*3]   += Math.sin(t * 0.8 + i) * 0.12 * dt;
+        if (p.array[i*3+1] > 5.5) p.array[i*3+1] = 0.1;
+      }
+      p.needsUpdate = true;
+    }
+
+    // 人影 — かすかな佇まいの揺れ
+    for (const f of figures) {
+      f.group.position.y = Math.sin(t * 1.3 + f.ph) * 0.012;
+    }
+
+    // 雲 — 月の前をゆっくり流れる
+    for (const c of clouds) {
+      c.mesh.position.x += c.speed * dt;
+      if (c.mesh.position.x > 40) c.mesh.position.x = -40;
     }
   }
 
