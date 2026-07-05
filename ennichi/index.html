@@ -161,6 +161,10 @@
 
 <script type="module">
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 /* ────────────────────────────────
    基本セットアップ
@@ -179,6 +183,18 @@ scene.fog = new THREE.Fog(0x0d0820, 14, 58);
 const camera = new THREE.PerspectiveCamera(58, innerWidth / innerHeight, 0.1, 200);
 
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ポストプロセス — 提灯・電球・花火を光学的ににじませる */
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(innerWidth, innerHeight),
+  0.55,   // strength
+  0.65,   // radius
+  0.62    // threshold — 提灯の emissive と花火だけ拾う
+);
+composer.addPass(bloomPass);
+composer.addPass(new OutputPass());
 
 /* ────────────────────────────────
    Canvas テクスチャ工房
@@ -355,7 +371,7 @@ function lanternString(z, count = 7, height = 3.6) {
     group.add(capBot);
 
     const glow = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: warmGlowTex, transparent: true, opacity: 0.55,
+      map: warmGlowTex, transparent: true, opacity: 0.3,   // ブルーム導入に伴い減光
       blending: THREE.AdditiveBlending, depthWrite: false,
     }));
     glow.scale.setScalar(1.9);
@@ -391,7 +407,7 @@ const stallNames = [
 const stallBodyMat = new THREE.MeshStandardMaterial({ color: 0x2a1d16, roughness: 0.85 });
 const stallRoofMat = new THREE.MeshStandardMaterial({ color: 0x3d1410, roughness: 0.7 });
 const stallInnerMat = new THREE.MeshStandardMaterial({
-  color: 0xffd9a0, emissive: 0xff9a40, emissiveIntensity: 0.85, roughness: 1,
+  color: 0xffd9a0, emissive: 0xff9a40, emissiveIntensity: 0.55, roughness: 1,
 });
 const kouhakuMat = new THREE.MeshStandardMaterial({ map: kouhakuTex, roughness: 0.9, side: THREE.DoubleSide });
 
@@ -433,7 +449,7 @@ function stall(x, z, nameChars, side) {
 
   // 店先の裸電球
   const bulbGlow = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: warmGlowTex, transparent: true, opacity: 0.8,
+    map: warmGlowTex, transparent: true, opacity: 0.45,   // ブルーム導入に伴い減光
     blending: THREE.AdditiveBlending, depthWrite: false,
   }));
   bulbGlow.scale.setScalar(1.4);
@@ -1139,7 +1155,7 @@ renderer.setAnimationLoop(() => {
   camera.position.x = lookX * 0.6;
   camera.lookAt(lookX * 4.5, 1.7 - lookY * 2.4, walkZ - 10);
 
-  renderer.render(scene, camera);
+  composer.render();
 
   if (!readyLogged) { console.log('[site] ready'); readyLogged = true; }
 });
@@ -1148,6 +1164,7 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
 });
 </script>
 </body>
