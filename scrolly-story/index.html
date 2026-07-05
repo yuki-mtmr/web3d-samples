@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ORBIS — 発想から出荷へ</title>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <script type="importmap">
+    {"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
+    </script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            /* height:100% would cap documentElement.scrollHeight at the viewport,
+               killing page scroll (and making scrollProgress 0/0 = NaN) */
+            min-height: 100%;
+            overflow-x: hidden;
+        }
+
+        body {
+            font-family: 'IBM Plex Sans JP', 'IBM Plex Sans', sans-serif;
+            background-color: #101623;
+            color: #f0ede8;
+            line-height: 1.6;
+        }
+
+        canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            display: block;
+        }
+
+        /* Progress bar */
+        .progress-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background-color: #e0432d;
+            transform-origin: left;
+            transform: scaleX(0);
+            z-index: 10;
+        }
+
+        /* Sections wrapper */
+        .sections-wrapper {
+            position: relative;
+            z-index: 1;
+        }
+
+        section {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            padding: 4rem 2rem;
+        }
+
+        section:nth-child(odd) .card {
+            margin-left: 0;
+            margin-right: auto;
+        }
+
+        section:nth-child(even) .card {
+            margin-left: auto;
+            margin-right: 0;
+        }
+
+        /* Card styling */
+        .card {
+            max-width: 34rem;
+            background-color: #f7f5f0;
+            color: #1a1a1a;
+            padding: 3rem;
+            border-radius: 0;
+            opacity: 0;
+            transform: translateY(2rem);
+            transition: opacity 0.8s cubic-bezier(0.23, 1, 0.320, 1),
+                        transform 0.8s cubic-bezier(0.23, 1, 0.320, 1);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .card.in-view {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* Section number */
+        .section-number {
+            display: inline-block;
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.15em;
+            color: #e0432d;
+            margin-bottom: 1.5rem;
+            text-transform: uppercase;
+            font-family: 'IBM Plex Sans', sans-serif;
+        }
+
+        /* Headings */
+        .card h2 {
+            font-size: clamp(1.75rem, 5vw, 2.5rem);
+            font-weight: 700;
+            margin-bottom: 1.25rem;
+            line-height: 1.2;
+            letter-spacing: -0.02em;
+        }
+
+        /* Paragraph */
+        .card p {
+            font-size: clamp(0.95rem, 1.5vw, 1.125rem);
+            line-height: 1.75;
+            color: #2a2a2a;
+            font-weight: 400;
+        }
+
+        /* Reduced motion support */
+        @media (prefers-reduced-motion: reduce) {
+            .card {
+                opacity: 1;
+                transform: translateY(0);
+                transition: none;
+            }
+        }
+
+        /* Mobile responsive */
+        @media (max-width: 768px) {
+            section {
+                padding: 3rem 1.5rem;
+            }
+
+            .card {
+                padding: 2rem;
+                margin-left: auto !important;
+                margin-right: auto !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="progress-bar"></div>
+    <canvas id="canvas"></canvas>
+
+    <div class="sections-wrapper">
+        <section>
+            <div class="card">
+                <div class="section-number">01 発想</div>
+                <h2>想像の形へ</h2>
+                <p>机上に置かれた一つのオブジェクト。それは回転する、呼吸する、考える。ORBISは、デジタルと物質の境界を溶かすデスク彫刻。エンジニアリングと工芸が織り成す、新しい創造の道具。</p>
+            </div>
+        </section>
+
+        <section>
+            <div class="card">
+                <div class="section-number">02 素材</div>
+                <h2>最良の選択</h2>
+                <p>アルミニウム合金の肌に、精密加工による光の彫刻。表面は鏡面処理と起毛仕上げが共存する。内部には極小モーターと駆動基板。触れるたびに、新しい表情を見せる。</p>
+            </div>
+        </section>
+
+        <section>
+            <div class="card">
+                <div class="section-number">03 造形</div>
+                <h2>幾何学的優雅さ</h2>
+                <p>複雑な曲面は、数式から生まれた。トーラス結び目の純粋な形態が、回転し、光を受け、影を作る。その動きは計算され、その美しさは必然。</p>
+            </div>
+        </section>
+
+        <section>
+            <div class="card">
+                <div class="section-number">04 出荷</div>
+                <h2>あなたの机へ</h2>
+                <p>白い箱に詰められ、世界のどこへでも。ORBISはあなたの創造のパートナーとなる。毎日、スクロールするように、回転する。その輝きが、あなたの思考を照らす。</p>
+            </div>
+        </section>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+        const canvas = document.getElementById('canvas');
+        const progressBar = document.querySelector('.progress-bar');
+
+        // Scene setup
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(
+            75,
+            window.innerWidth / window.innerHeight,
+            0.1,
+            1000
+        );
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x101623);
+
+        // Metallic material needs an environment map to reflect — without it,
+        // high-metalness surfaces render nearly black and vanish into the background
+        scene.environment = new THREE.PMREMGenerator(renderer)
+            .fromScene(new RoomEnvironment(), 0.04).texture;
+
+        // Fog for depth
+        scene.fog = new THREE.Fog(0x101623, 15, 25);
+
+        // Ambient light
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+
+        // Directional light
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight.position.set(5, 5, 5);
+        scene.add(directionalLight);
+
+        // Hemisphere light
+        const hemisphereLight = new THREE.HemisphereLight(0x87ceeb, 0x101623, 0.4);
+        scene.add(hemisphereLight);
+
+        // Torus knot geometry and material
+        const geometry = new THREE.TorusKnotGeometry(1, 0.32, 220, 32);
+        const material = new THREE.MeshStandardMaterial({
+            metalness: 0.9,
+            roughness: 0.25,
+            color: 0x4a7c9e
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        scene.add(mesh);
+
+        // Initial camera position
+        camera.position.z = 5;
+        camera.position.y = 0.5;
+
+        // Intersection Observer for card entrance animations
+        const cards = document.querySelectorAll('.card');
+        const observer = new IntersectionObserver(entries => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('in-view');
+                }
+            });
+        }, { threshold: 0.2 });
+
+        cards.forEach(card => observer.observe(card));
+
+        // Animation loop with scroll-driven transforms
+        let isFirstFrame = true;
+        renderer.setAnimationLoop(() => {
+            // Calculate scroll progress
+            const totalScroll = Math.max(document.documentElement.scrollHeight - window.innerHeight, 1);
+            const scrollProgress = window.scrollY / totalScroll;
+
+            // Mesh rotation driven by scroll
+            mesh.rotation.x = scrollProgress * Math.PI * 2;
+            mesh.rotation.y = scrollProgress * Math.PI * 3;
+
+            // Camera position and view
+            camera.position.z = 5 - scrollProgress * 2.2;
+            camera.position.y = 0.5 - scrollProgress * 1.0;
+            camera.lookAt(0, 0, 0);
+
+            // Color lerp between blue-grey and red
+            const color1 = new THREE.Color(0x4a7c9e);
+            const color2 = new THREE.Color(0xe0432d);
+            material.color.copy(color1).lerp(color2, scrollProgress);
+
+            // Update progress bar
+            progressBar.style.transform = `scaleX(${scrollProgress})`;
+
+            // Render scene
+            renderer.render(scene, camera);
+
+            // Log ready on first frame
+            if (isFirstFrame) {
+                console.log('[site] ready');
+                isFirstFrame = false;
+            }
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+        });
+    </script>
+</body>
+</html>

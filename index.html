@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>web3d-kit — sample sites</title>
+<style>
+  :root {
+    --bg: #101318; --fg: #e8eaf0; --muted: #8a90a0; --line: #262b36;
+  }
+  * { margin: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: -apple-system, 'Hiragino Sans', sans-serif;
+    min-height: 100vh; padding: clamp(2rem, 6vw, 5rem);
+  }
+  h1 { font-size: clamp(1.6rem, 4vw, 2.4rem); letter-spacing: -0.02em; }
+  p.lead { color: var(--muted); margin: 0.75rem 0 2.5rem; }
+  ul { list-style: none; padding: 0; display: grid; gap: 0; max-width: 46rem; }
+  li { border-top: 1px solid var(--line); }
+  li:last-child { border-bottom: 1px solid var(--line); }
+  a {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 1rem;
+    padding: 1.1rem 0.5rem; color: inherit; text-decoration: none;
+    transition: background 150ms ease, padding-left 150ms ease;
+  }
+  a:hover, a:focus-visible { background: #171c26; padding-left: 1rem; }
+  .name { font-weight: 600; }
+  .desc { color: var(--muted); font-size: 0.85rem; text-align: right; }
+</style>
+</head>
+<body>
+  <h1>web3d-kit — sample sites</h1>
+  <p class="lead">3D 表現 × 5 つのデザイン方向性のサンプル。各行をクリックで開く。</p>
+  <ul>
+    <li><a href="./glass-hero/"><span class="name">glass-hero</span><span class="desc">ガラスモーフィズム / GLB アセット + transmission</span></a></li>
+    <li><a href="./particle-field/"><span class="name">particle-field</span><span class="desc">ダークラグジュアリー / 12k 粒子の波 + マウス視差</span></a></li>
+    <li><a href="./scrolly-story/"><span class="name">scrolly-story</span><span class="desc">エディトリアル / スクロール駆動 3D ナラティブ</span></a></li>
+    <li><a href="./bento-lab/"><span class="name">bento-lab</span><span class="desc">ネオブルータリズム / ベントーグリッド内に 3 canvas</span></a></li>
+    <li><a href="./retro-terrain/"><span class="name">retro-terrain</span><span class="desc">レトロフューチャー / ワイヤーフレーム地形フライスルー</span></a></li>
+  </ul>
+</body>
+</html>

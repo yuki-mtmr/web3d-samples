@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Glass Hero — 3D Web Experience</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;700;900&display=swap" rel="stylesheet">
+
+  <script type="importmap">
+  {"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
+  </script>
+
+  <style>
+    :root {
+      --color-bg-light: #eef2f8;
+      --color-bg-dark: #dfe7f2;
+      --color-text-primary: #0f172a;
+      --color-text-secondary: #475569;
+      --color-accent: #0ea5e9;
+      --color-accent-hover: #0284c7;
+      --color-glass-bg: rgba(255, 255, 255, 0.7);
+      --color-glass-border: rgba(255, 255, 255, 0.3);
+      --spacing-xs: 0.5rem;
+      --spacing-sm: 1rem;
+      --spacing-md: 1.5rem;
+      --spacing-lg: 2rem;
+      --spacing-xl: 3rem;
+      --radius-sm: 0.5rem;
+      --radius-md: 1rem;
+      --radius-lg: 1.5rem;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      color: var(--color-text-primary);
+      background: linear-gradient(135deg, var(--color-bg-light) 0%, var(--color-bg-dark) 100%);
+      position: relative;
+    }
+
+    canvas {
+      display: block;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+
+    .content {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    .content > * {
+      pointer-events: auto;
+    }
+
+    /* Navigation */
+    nav {
+      position: fixed;
+      top: var(--spacing-lg);
+      left: var(--spacing-lg);
+      right: var(--spacing-lg);
+      z-index: 20;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: var(--spacing-sm) var(--spacing-md);
+      background: var(--color-glass-bg);
+      border: 1px solid var(--color-glass-border);
+      border-radius: var(--radius-lg);
+      backdrop-filter: blur(12px);
+      max-width: 100%;
+    }
+
+    .logo {
+      font-family: 'Zen Kaku Gothic New', sans-serif;
+      font-weight: 700;
+      font-size: clamp(0.875rem, 2vw, 1.125rem);
+      color: var(--color-text-primary);
+      letter-spacing: -0.02em;
+    }
+
+    nav ul {
+      display: flex;
+      list-style: none;
+      gap: var(--spacing-md);
+    }
+
+    nav a {
+      font-size: clamp(0.75rem, 1.5vw, 0.875rem);
+      color: var(--color-text-secondary);
+      text-decoration: none;
+      transition: color 0.3s ease;
+    }
+
+    nav a:hover,
+    nav a:focus-visible {
+      color: var(--color-accent);
+      outline: none;
+    }
+
+    /* Hero Section */
+    .hero {
+      position: fixed;
+      top: 50%;
+      left: var(--spacing-lg);
+      transform: translateY(-50%);
+      max-width: 90vw;
+      width: 100%;
+    }
+
+    .hero-content {
+      max-width: 32rem;
+    }
+
+    h1 {
+      font-family: 'Zen Kaku Gothic New', sans-serif;
+      font-size: clamp(2.5rem, 8vw, 5rem);
+      font-weight: 900;
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+      color: var(--color-text-primary);
+      margin-bottom: var(--spacing-md);
+      word-break: break-word;
+    }
+
+    .subtitle {
+      font-size: clamp(0.875rem, 2vw, 1rem);
+      color: var(--color-text-secondary);
+      line-height: 1.6;
+      margin-bottom: var(--spacing-lg);
+      max-width: 26rem;
+    }
+
+    .cta-button {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--spacing-sm);
+      padding: var(--spacing-sm) var(--spacing-md);
+      background: var(--color-accent);
+      color: white;
+      text-decoration: none;
+      border-radius: var(--radius-lg);
+      font-size: clamp(0.875rem, 1.5vw, 1rem);
+      font-weight: 600;
+      transition: all 0.3s ease;
+      border: none;
+      cursor: pointer;
+      letter-spacing: -0.01em;
+    }
+
+    .cta-button:hover {
+      background: var(--color-accent-hover);
+      transform: translateY(-2px);
+      box-shadow: 0 12px 24px rgba(14, 165, 233, 0.3);
+    }
+
+    .cta-button:focus-visible {
+      outline: 2px solid var(--color-accent);
+      outline-offset: 2px;
+    }
+
+    .cta-button:active {
+      transform: translateY(0);
+    }
+
+    /* Stats Card */
+    .stats-card {
+      position: fixed;
+      bottom: var(--spacing-lg);
+      right: var(--spacing-lg);
+      padding: var(--spacing-lg);
+      background: var(--color-glass-bg);
+      border: 1px solid var(--color-glass-border);
+      border-radius: var(--radius-lg);
+      backdrop-filter: blur(12px);
+      width: clamp(16rem, 90vw, 20rem);
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--spacing-md);
+    }
+
+    .stat-item {
+      text-align: center;
+    }
+
+    .stat-value {
+      font-family: 'Zen Kaku Gothic New', sans-serif;
+      font-size: clamp(1.5rem, 3vw, 1.875rem);
+      font-weight: 700;
+      color: var(--color-accent);
+      line-height: 1;
+      margin-bottom: var(--spacing-xs);
+    }
+
+    .stat-label {
+      font-size: clamp(0.75rem, 1.5vw, 0.875rem);
+      color: var(--color-text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      nav {
+        top: var(--spacing-md);
+        left: var(--spacing-md);
+        right: var(--spacing-md);
+        padding: var(--spacing-sm);
+      }
+
+      nav ul {
+        gap: var(--spacing-sm);
+      }
+
+      .hero {
+        top: 55%;
+        left: var(--spacing-md);
+      }
+
+      .stats-card {
+        bottom: var(--spacing-md);
+        right: var(--spacing-md);
+        width: clamp(14rem, 85vw, 18rem);
+        padding: var(--spacing-md);
+      }
+    }
+
+    @media (max-width: 480px) {
+      nav {
+        flex-direction: column;
+        gap: var(--spacing-sm);
+      }
+
+      nav ul {
+        justify-content: center;
+      }
+
+      h1 {
+        margin-bottom: var(--spacing-sm);
+      }
+
+      .subtitle {
+        margin-bottom: var(--spacing-md);
+      }
+
+      .stats-card {
+        bottom: var(--spacing-sm);
+        right: var(--spacing-sm);
+      }
+    }
+
+    /* Reduced motion */
+    @media (prefers-reduced-motion: reduce) {
+      * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    /* Loading indicator */
+    .loading-indicator {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 0.875rem;
+      color: var(--color-text-secondary);
+      z-index: 15;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <div class="content">
+    <nav>
+      <div class="logo">3D Kit</div>
+      <ul>
+        <li><a href="#about">About</a></li>
+        <li><a href="#works">Works</a></li>
+        <li><a href="#contact">Contact</a></li>
+      </ul>
+    </nav>
+
+    <section class="hero">
+      <div class="hero-content">
+        <h1>Glass Hero</h1>
+        <p class="subtitle">次世代の 3D ウェブ体験を、シンプルなコンセプトで実装。smooth interactions が特徴です。</p>
+        <a href="#" class="cta-button">Explore</a>
+      </div>
+    </section>
+
+    <div class="stats-card">
+      <div class="stats-grid">
+        <div class="stat-item">
+          <div class="stat-value">2.4K</div>
+          <div class="stat-label">Users</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value">98%</div>
+          <div class="stat-label">Uptime</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value">14ms</div>
+          <div class="stat-label">Latency</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+    import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+    // Scene setup
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(3.2, 1.4, 3.2);
+    camera.lookAt(0, 0, 0);
+
+    // Renderer
+    const canvas = document.getElementById('canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    // Exposure below 1: transmission + bright env + light page background blows out to white otherwise
+    renderer.toneMappingExposure = 0.65;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+
+    // Environment
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmremGenerator.dispose();
+
+    // Lighting fallback
+    const light = new THREE.DirectionalLight(0xffffff, 0.8);
+    light.position.set(5, 8, 7);
+    scene.add(light);
+
+    // Load model
+    const draco = new DRACOLoader();
+    draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+
+    const loader = new GLTFLoader();
+    loader.setDRACOLoader(draco);
+
+    let model;
+    loader.load('./hero-asset-transformed.glb', (gltf) => {
+      model = gltf.scene;
+      scene.add(model);
+      console.log('[site] ready');
+    });
+
+    // Animation loop
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    renderer.setAnimationLoop(() => {
+      if (model && !prefersReducedMotion) {
+        model.rotation.y += 0.003;
+      }
+      renderer.render(scene, camera);
+    });
+
+    // Handle resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Cleanup
+    window.addEventListener('beforeunload', () => {
+      renderer.dispose();
+      pmremGenerator.dispose();
+    });
+  </script>
+</body>
+</html>
