@@ -155,7 +155,8 @@
 
 <div class="hud">
   <button class="sound-btn" id="soundBtn" aria-pressed="false">♪ 祭囃子を聴く</button>
-  <span class="hint">マウスで見回す — 参道は自動でゆっくり進みます</span>
+  <button class="sound-btn" id="lookBtn" aria-pressed="false">👁 視点追従 OFF</button>
+  <span class="hint">ドラッグで見回す — 参道は自動でゆっくり進みます</span>
 </div>
 
 <script type="module">
@@ -1005,10 +1006,35 @@ let lookTargetX = 0, lookTargetY = 0, lookX = 0, lookY = 0;
 const fader = document.getElementById('fader');
 let fading = false;
 
+// 見回しは「ドラッグ中」または「追従モード ON」のときだけ。
+// 常時マウス追従は好みが分かれるためデフォルト OFF。
+let followMode = false;
+let dragging = false;
+
+addEventListener('pointerdown', (e) => {
+  if (e.target.closest('button')) return;   // ボタン操作は視点に影響させない
+  dragging = true;
+});
+addEventListener('pointerup', () => { dragging = false; });
+addEventListener('pointercancel', () => { dragging = false; });
+
 addEventListener('pointermove', (e) => {
   if (reducedMotion) return;
+  if (!followMode && !dragging) return;
   lookTargetX = (e.clientX / innerWidth) * 2 - 1;
   lookTargetY = (e.clientY / innerHeight) * 2 - 1;
+});
+
+// ドラッグを離したら視線をゆっくり正面へ戻す（followMode 時は維持）
+setInterval(() => {
+  if (!followMode && !dragging) { lookTargetX *= 0.9; lookTargetY *= 0.9; }
+}, 120);
+
+const lookBtn = document.getElementById('lookBtn');
+lookBtn.addEventListener('click', () => {
+  followMode = !followMode;
+  lookBtn.textContent = followMode ? '👁 視点追従 ON' : '👁 視点追従 OFF';
+  lookBtn.setAttribute('aria-pressed', String(followMode));
 });
 
 camera.position.set(0, 1.55, WALK_START);
