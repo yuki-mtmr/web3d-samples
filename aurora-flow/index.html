@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AURORA — Ambient Infrastructure</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌌</text></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --teal: #5eead4;
+            --violet: #a78bfa;
+            --bg: #070a14;
+            --ink: #e8ecf8;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: var(--bg);
+            font-family: 'Manrope', system-ui, -apple-system, sans-serif;
+            color: var(--ink);
+        }
+
+        canvas {
+            display: block;
+        }
+
+        /* Navigation */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 64px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 40px;
+            z-index: 100;
+            pointer-events: auto;
+        }
+
+        .wordmark {
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            background: linear-gradient(90deg, var(--teal), var(--violet));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        nav ul {
+            display: flex;
+            gap: 48px;
+            list-style: none;
+        }
+
+        nav a {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--ink);
+            text-decoration: none;
+            position: relative;
+            letter-spacing: 0.5px;
+            transition: color 0.2s ease-out;
+        }
+
+        nav a::after {
+            content: '';
+            position: absolute;
+            bottom: -4px;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: var(--teal);
+            transform: scaleX(0);
+            transform-origin: left;
+            transition: transform 0.18s ease-out;
+        }
+
+        nav a:hover::after {
+            transform: scaleX(1);
+        }
+
+        /* Hero Section */
+        .hero {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            pointer-events: none;
+            z-index: 50;
+        }
+
+        .eyebrow {
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            color: var(--teal);
+            margin-bottom: 16px;
+            opacity: 0.9;
+        }
+
+        h1 {
+            font-size: 72px;
+            font-weight: 700;
+            line-height: 1.1;
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, var(--teal), var(--violet));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -1px;
+        }
+
+        .subtitle {
+            font-size: 16px;
+            font-weight: 400;
+            color: var(--ink);
+            opacity: 0.7;
+            margin-bottom: 32px;
+            letter-spacing: 0.3px;
+        }
+
+        .cta-group {
+            display: flex;
+            gap: 16px;
+            pointer-events: auto;
+        }
+
+        .cta {
+            padding: 12px 28px;
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            border: none;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.18s ease-out;
+            font-family: 'Manrope', system-ui, -apple-system, sans-serif;
+        }
+
+        .cta-primary {
+            background: var(--teal);
+            color: var(--bg);
+        }
+
+        .cta-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 32px rgba(94, 234, 212, 0.2);
+        }
+
+        .cta-primary:focus-visible {
+            outline: 2px solid var(--violet);
+            outline-offset: 2px;
+        }
+
+        .cta-ghost {
+            background: transparent;
+            color: var(--ink);
+            border: 1px solid rgba(94, 234, 212, 0.4);
+        }
+
+        .cta-ghost:hover {
+            border-color: var(--teal);
+            transform: translateY(-2px);
+        }
+
+        .cta-ghost:focus-visible {
+            outline: 2px solid var(--violet);
+            outline-offset: 2px;
+        }
+
+        /* Feature Chips */
+        .features {
+            position: fixed;
+            bottom: 40px;
+            left: 40px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            z-index: 50;
+            pointer-events: none;
+        }
+
+        .chip {
+            padding: 10px 14px;
+            font-size: 12px;
+            font-weight: 500;
+            letter-spacing: 0.4px;
+            border: 1px solid rgba(94, 234, 212, 0.2);
+            border-radius: 20px;
+            background: rgba(7, 10, 20, 0.6);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--ink);
+            opacity: 0.8;
+        }
+
+        .chip-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--teal);
+        }
+
+        /* Reduced Motion */
+        @media (prefers-reduced-motion: reduce) {
+            * {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+    </style>
+    <script type="importmap">
+    {"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
+    </script>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav>
+        <div class="wordmark">AURORA</div>
+        <ul>
+            <li><a href="#features">Features</a></li>
+            <li><a href="#pricing">Pricing</a></li>
+            <li><a href="#docs">Docs</a></li>
+        </ul>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="eyebrow">AMBIENT INFRASTRUCTURE</div>
+        <h1>Unlock Your Edge</h1>
+        <p class="subtitle">低遅延・自動スケール・グローバルな基盤</p>
+        <div class="cta-group">
+            <button class="cta cta-primary">Get Started</button>
+            <button class="cta cta-ghost">Learn More</button>
+        </div>
+    </section>
+
+    <!-- Feature Chips -->
+    <div class="features">
+        <div class="chip">
+            <span class="chip-dot"></span>
+            低遅延
+        </div>
+        <div class="chip">
+            <span class="chip-dot"></span>
+            自動スケール
+        </div>
+        <div class="chip">
+            <span class="chip-dot"></span>
+            グローバル
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x070a14);
+        scene.fog = new THREE.Fog(0x070a14, 30, 80);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 2, 14);
+        camera.lookAt(0, 4, -20);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        // Parallax state
+        let mouseX = 0;
+        let mouseY = 0;
+        const cameraBaseX = camera.position.x;
+        const cameraBaseY = camera.position.y;
+
+        // Reduced motion state
+        let reducedMotion = false;
+        let animationTime = 0;
+
+        // Check for prefers-reduced-motion
+        const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+        reducedMotion = mediaQuery.matches;
+        mediaQuery.addEventListener('change', (e) => {
+            reducedMotion = e.matches;
+        });
+
+        // Create aurora texture
+        function createAuroraTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+
+            // 横方向の色帯（両端は完全に透明へ）
+            const h = ctx.createLinearGradient(0, 0, canvas.width, 0);
+            h.addColorStop(0.0, 'rgba(94, 234, 212, 0)');
+            h.addColorStop(0.18, 'rgba(94, 234, 212, 0.5)');
+            h.addColorStop(0.45, 'rgba(122, 184, 255, 0.42)');
+            h.addColorStop(0.72, 'rgba(167, 139, 250, 0.5)');
+            h.addColorStop(1.0, 'rgba(167, 139, 250, 0)');
+            ctx.fillStyle = h;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 縦方向のフェードで切り抜き — 上下端も透明に溶かして「板」に見せない
+            const v = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            v.addColorStop(0.0, 'rgba(0,0,0,0)');
+            v.addColorStop(0.4, 'rgba(0,0,0,1)');
+            v.addColorStop(0.7, 'rgba(0,0,0,0.85)');
+            v.addColorStop(1.0, 'rgba(0,0,0,0)');
+            ctx.globalCompositeOperation = 'destination-in';
+            ctx.fillStyle = v;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.globalCompositeOperation = 'source-over';
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        const auroraTexture = createAuroraTexture();
+
+        // Create aurora curtains
+        const curtains = [];
+        const curtainConfigs = [
+            { z: -20, opacity: 0.5, speed: 0.3, phase: 0 },
+            { z: -28, opacity: 0.4, speed: 0.45, phase: 2 },
+            { z: -36, opacity: 0.3, speed: 0.6, phase: 4 },
+        ];
+
+        curtainConfigs.forEach((config) => {
+            const geometry = new THREE.PlaneGeometry(60, 14, 60, 1);
+            const material = new THREE.MeshBasicMaterial({
+                map: auroraTexture,
+                transparent: true,
+                opacity: config.opacity,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                side: THREE.DoubleSide,
+            });
+            const curtain = new THREE.Mesh(geometry, material);
+            curtain.position.set(0, 6, config.z);
+            curtain.userData = {
+                speed: config.speed,
+                phase: config.phase,
+                basePositions: geometry.attributes.position.array.slice(),
+            };
+            scene.add(curtain);
+            curtains.push(curtain);
+        });
+
+        // Create stars
+        const starsGeometry = new THREE.BufferGeometry();
+        const starPositions = new Float32Array(200 * 3);
+        for (let i = 0; i < 200; i++) {
+            starPositions[i * 3] = (Math.random() - 0.5) * 100;
+            starPositions[i * 3 + 1] = (Math.random() - 0.5) * 100;
+            starPositions[i * 3 + 2] = (Math.random() - 0.5) * 100;
+        }
+        starsGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+        const starsMaterial = new THREE.PointsMaterial({
+            color: 0xffffff,
+            size: 0.2,
+            fog: false,
+        });
+        const stars = new THREE.Points(starsGeometry, starsMaterial);
+        scene.add(stars);
+
+        // Animation variables
+        let isFirstFrame = true;
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (!reducedMotion) {
+                animationTime += 0.016; // ~60fps
+            }
+
+            // Update camera position with parallax
+            const targetX = cameraBaseX + mouseX * 1.2;
+            const targetY = cameraBaseY + mouseY * 0.8;
+            camera.position.x += (targetX - camera.position.x) * 0.12;
+            camera.position.y += (targetY - camera.position.y) * 0.12;
+
+            // Update curtains
+            curtains.forEach((curtain) => {
+                const positionAttribute = curtain.geometry.attributes.position;
+                const basePositions = curtain.userData.basePositions;
+                const speed = curtain.userData.speed;
+                const phase = curtain.userData.phase;
+
+                for (let i = 0; i < positionAttribute.count; i++) {
+                    const x = basePositions[i * 3];
+                    const y = basePositions[i * 3 + 1];
+                    const z = basePositions[i * 3 + 2];
+
+                    const displacement = Math.sin(x * 0.25 + animationTime * speed + phase) * 1.6;
+                    positionAttribute.setXYZ(i, x, y, z + displacement);
+                }
+                positionAttribute.needsUpdate = true;
+            });
+
+            renderer.render(scene, camera);
+
+            if (isFirstFrame) {
+                console.log('[site] ready');
+                isFirstFrame = false;
+            }
+        }
+
+        // Event listeners
+        document.addEventListener('mousemove', (e) => {
+            mouseX = (e.clientX / window.innerWidth - 0.5) * 2;
+            mouseY = (e.clientY / window.innerHeight - 0.5) * 2;
+        });
+
+        window.addEventListener('resize', () => {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+        });
+
+        animate();
+    </script>
+</body>
+</html>

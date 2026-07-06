@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Rhythm Taps</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🥁</text></svg>">
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
+</script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Avenir Next', 'Hiragino Sans', sans-serif; }
+  body { background: #0c0a18; touch-action: none; }
+  canvas { display: block; }
+  .hud {
+    position: fixed; top: 3vh; left: 0; right: 0; text-align: center;
+    color: #f0ecff; pointer-events: none; z-index: 10;
+  }
+  .score { font-size: clamp(2rem, 6vw, 3rem); font-weight: 800; font-variant-numeric: tabular-nums; }
+  .combo { font-size: 1rem; letter-spacing: 0.25em; color: #8affda; min-height: 1.4em; }
+  .judge {
+    position: fixed; top: 40%; left: 0; right: 0; text-align: center; z-index: 10;
+    font-size: clamp(1.4rem, 5vw, 2.2rem); font-weight: 800; letter-spacing: 0.2em;
+    pointer-events: none; opacity: 0; transition: opacity 0.1s ease;
+  }
+  .judge.show { opacity: 1; }
+  .keys {
+    position: fixed; bottom: 3vh; left: 0; right: 0; text-align: center;
+    color: rgba(240,236,255,0.45); font-size: 0.75rem; letter-spacing: 0.3em;
+    pointer-events: none; z-index: 10;
+  }
+  .overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1.1rem;
+    color: #f0ecff; z-index: 20; background: rgba(10, 8, 24, 0.66);
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    transition: opacity 0.3s ease, visibility 0.3s; text-align: center;
+  }
+  .overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
+  .overlay h1 { font-size: clamp(2rem, 7vw, 3.2rem); font-weight: 800; letter-spacing: 0.2em;
+    background: linear-gradient(105deg, #8affda, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .overlay p { opacity: 0.85; font-size: 0.9rem; letter-spacing: 0.1em; line-height: 2; padding: 0 1.5rem; }
+  .overlay .result { font-size: clamp(2.8rem, 10vw, 4.6rem); font-weight: 800; line-height: 1; color: #8affda; font-variant-numeric: tabular-nums; }
+  .overlay .rank { font-size: clamp(3.5rem, 13vw, 6rem); font-weight: 800; color: #ffd24a; line-height: 1; }
+  .btn {
+    pointer-events: auto; cursor: pointer; font-family: inherit;
+    background: #8affda; color: #0c0a18; border: none; border-radius: 999px;
+    padding: 0.9rem 2.8rem; font-size: 1rem; font-weight: 800; letter-spacing: 0.2em;
+    transition: transform 0.15s cubic-bezier(0.16,1,0.3,1), box-shadow 0.15s ease-out;
+  }
+  .btn:hover { transform: scale(1.05); box-shadow: 0 12px 32px rgba(138,255,218,0.35); }
+  .btn:focus-visible { outline: 2px solid #a78bfa; outline-offset: 3px; }
+</style>
+</head>
+<body>
+<div class="hud">
+  <div class="score" id="score">0</div>
+  <div class="combo" id="combo"></div>
+</div>
+<div class="judge" id="judge"></div>
+<div class="keys">D　F　J　K ／ レーンをタップ</div>
+
+<div class="overlay" id="titleOverlay">
+  <h1>RHYTHM TAPS</h1>
+  <p>ビートに合わせて、ノーツがラインに重なった瞬間にレーンを叩く。<br>キーボードは D・F・J・K。スマホはレーンをタップ。全 24 小節。</p>
+  <button class="btn" id="startBtn">PLAY</button>
+</div>
+
+<div class="overlay hidden" id="overOverlay">
+  <div class="rank" id="rank">A</div>
+  <p>SCORE / MAX COMBO</p>
+  <div class="result" id="result">0</div>
+  <p id="newBest" style="color:#ffd24a"></p>
+  <button class="btn" id="retryBtn">ONE MORE</button>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0c0a18);
+scene.fog = new THREE.Fog(0x0c0a18, 20, 46);
+
+const camera = new THREE.PerspectiveCamera(58, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 3.4, 6.5);
+camera.lookAt(0, 0.4, -6);
+
+scene.add(new THREE.AmbientLight(0x554a88, 1.6));
+
+/* ---------- レーン ---------- */
+const LANES = 4;
+const LANE_W = 1.5;
+const laneX = (i) => (i - (LANES - 1) / 2) * LANE_W;
+const LANE_COLORS = [0x8affda, 0x7ab8ff, 0xc79aff, 0xff9ad0];
+const HIT_Z = 0;
+
+for (let i = 0; i < LANES; i++) {
+  const lane = new THREE.Mesh(
+    new THREE.PlaneGeometry(LANE_W - 0.12, 44),
+    new THREE.MeshBasicMaterial({ color: 0x1a1630, transparent: true, opacity: 0.9 })
+  );
+  lane.rotation.x = -Math.PI / 2;
+  lane.position.set(laneX(i), 0, -16);
+  scene.add(lane);
+}
+// ヒットライン
+const hitLine = new THREE.Mesh(
+  new THREE.PlaneGeometry(LANES * LANE_W + 0.3, 0.16),
+  new THREE.MeshBasicMaterial({ color: 0xffffff })
+);
+hitLine.rotation.x = -Math.PI / 2;
+hitLine.position.set(0, 0.01, HIT_Z);
+scene.add(hitLine);
+
+// レーン押下フラッシュ
+const flashes = [];
+for (let i = 0; i < LANES; i++) {
+  const f = new THREE.Mesh(
+    new THREE.PlaneGeometry(LANE_W - 0.12, 2.2),
+    new THREE.MeshBasicMaterial({ color: LANE_COLORS[i], transparent: true, opacity: 0 })
+  );
+  f.rotation.x = -Math.PI / 2;
+  f.position.set(laneX(i), 0.02, HIT_Z - 0.4);
+  scene.add(f);
+  flashes.push(f);
+}
+
+/* ---------- ノーツ ---------- */
+const NOTE_SPEED = 11;       // units/sec
+const noteGeo = new THREE.BoxGeometry(LANE_W - 0.3, 0.16, 0.5);
+const noteMats = LANE_COLORS.map(c => new THREE.MeshBasicMaterial({ color: c }));
+const notes = [];            // { mesh, lane, hitTime, judged }
+
+function spawnNote(lane, hitTime) {
+  const mesh = new THREE.Mesh(noteGeo, noteMats[lane]);
+  mesh.position.set(laneX(lane), 0.1, HIT_Z - NOTE_SPEED * 4); // 仮置き（毎フレーム再計算）
+  scene.add(mesh);
+  notes.push({ mesh, lane, hitTime, judged: false });
+}
+
+/* ---------- 音楽（WebAudio 生成） ---------- */
+let actx = null, master = null;
+const BPM = 112, BEAT = 60 / BPM;
+const BARS = 24;
+let songStart = 0;   // actx 時刻
+
+function kick(time) {
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(150, time);
+  o.frequency.exponentialRampToValueAtTime(48, time + 0.1);
+  g.gain.setValueAtTime(0.5, time);
+  g.gain.exponentialRampToValueAtTime(0.001, time + 0.22);
+  o.connect(g).connect(master);
+  o.start(time); o.stop(time + 0.25);
+}
+function hat(time, vol = 0.1) {
+  const len = actx.sampleRate * 0.05;
+  const buf = actx.createBuffer(1, len, actx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const src = actx.createBufferSource();
+  src.buffer = buf;
+  const hp = actx.createBiquadFilter();
+  hp.type = 'highpass'; hp.frequency.value = 6000;
+  const g = actx.createGain(); g.gain.value = vol;
+  src.connect(hp).connect(g).connect(master);
+  src.start(time);
+}
+function bass(time, freq, dur) {
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'sawtooth'; o.frequency.value = freq;
+  const lp = actx.createBiquadFilter();
+  lp.type = 'lowpass'; lp.frequency.value = 500;
+  g.gain.setValueAtTime(0.16, time);
+  g.gain.setValueAtTime(0.16, time + dur - 0.05);
+  g.gain.exponentialRampToValueAtTime(0.001, time + dur);
+  o.connect(lp).connect(g).connect(master);
+  o.start(time); o.stop(time + dur);
+}
+function hitSfx(perfect) {
+  if (!actx) return;
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'triangle'; o.frequency.value = perfect ? 1320 : 880;
+  g.gain.setValueAtTime(0.12, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.12);
+  o.connect(g).connect(master);
+  o.start(); o.stop(actx.currentTime + 0.13);
+}
+
+/* 譜面生成: 小節ごとに決まったパターン（シード付き擬似乱数で毎回同じ） */
+function mulberry32(a) {
+  return function() {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function buildChart() {
+  const rnd = mulberry32(20260706);
+  const chart = [];   // { beat, lane }
+  for (let bar = 0; bar < BARS; bar++) {
+    const density = bar < 4 ? 1 : bar < 12 ? 2 : 3;  // 徐々に密度アップ
+    for (let b = 0; b < 4; b++) {
+      const beat = bar * 4 + b;
+      if (b === 0 || rnd() < 0.55) chart.push({ beat, lane: rnd() * LANES | 0 });
+      if (density >= 2 && rnd() < 0.4) chart.push({ beat: beat + 0.5, lane: rnd() * LANES | 0 });
+      if (density >= 3 && rnd() < 0.25) chart.push({ beat: beat + 0.25, lane: rnd() * LANES | 0 });
+    }
+  }
+  return chart;
+}
+let chart = [], chartIdx = 0, schedBeat = 0;
+
+/* ---------- ゲーム状態 ---------- */
+let playing = false;
+let score = 0, combo = 0, maxCombo = 0, hits = 0, total = 0;
+
+const scoreEl = document.getElementById('score');
+const comboEl = document.getElementById('combo');
+const judgeEl = document.getElementById('judge');
+const BEST_KEY = 'rhythm-taps-best';
+let best = +(localStorage.getItem(BEST_KEY) || 0);
+
+let judgeTimer = null;
+function showJudge(text, color) {
+  judgeEl.textContent = text;
+  judgeEl.style.color = color;
+  judgeEl.classList.add('show');
+  clearTimeout(judgeTimer);
+  judgeTimer = setTimeout(() => judgeEl.classList.remove('show'), 260);
+}
+
+function reset() {
+  for (const n of notes) scene.remove(n.mesh);
+  notes.length = 0;
+  chart = buildChart();
+  chartIdx = 0; schedBeat = 0;
+  score = 0; combo = 0; maxCombo = 0; hits = 0;
+  total = chart.length;
+  scoreEl.textContent = '0';
+  comboEl.textContent = '';
+  songStart = actx.currentTime + 1.2;   // 1.2 秒後に開始
+}
+
+function finish() {
+  playing = false;
+  const acc = total ? hits / total : 0;
+  const rank = acc >= 0.95 ? 'S' : acc >= 0.85 ? 'A' : acc >= 0.7 ? 'B' : acc >= 0.5 ? 'C' : 'D';
+  document.getElementById('rank').textContent = rank;
+  document.getElementById('result').textContent = `${score} / ${maxCombo}`;
+  const nb = document.getElementById('newBest');
+  if (score > best) {
+    best = score;
+    localStorage.setItem(BEST_KEY, best);
+    nb.textContent = '✦ NEW BEST ✦';
+  } else nb.textContent = '';
+  setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 600);
+}
+
+/* ---------- 判定 ---------- */
+const PERFECT_W = 0.09, GOOD_W = 0.18;
+function judgeLane(lane) {
+  if (!playing) return;
+  flashes[lane].material.opacity = 0.55;
+  const now = actx.currentTime - songStart;
+  let target = null, bestDt = GOOD_W;
+  for (const n of notes) {
+    if (n.judged || n.lane !== lane) continue;
+    const dt = Math.abs(n.hitTime - now);
+    if (dt < bestDt) { bestDt = dt; target = n; }
+  }
+  if (!target) return;
+  target.judged = true;
+  scene.remove(target.mesh);
+  hits++;
+  if (bestDt <= PERFECT_W) {
+    score += 300; combo++;
+    showJudge('PERFECT', '#8affda');
+    hitSfx(true);
+  } else {
+    score += 100; combo++;
+    showJudge('GOOD', '#7ab8ff');
+    hitSfx(false);
+  }
+  maxCombo = Math.max(maxCombo, combo);
+  scoreEl.textContent = score;
+  comboEl.textContent = combo >= 2 ? `${combo} COMBO` : '';
+}
+
+addEventListener('keydown', (e) => {
+  const map = { KeyD: 0, KeyF: 1, KeyJ: 2, KeyK: 3 };
+  if (map[e.code] !== undefined && !e.repeat) judgeLane(map[e.code]);
+});
+addEventListener('pointerdown', (e) => {
+  if (e.target && e.target.closest && e.target.closest('button')) return;
+  if (!playing) return;
+  const lane = Math.min(LANES - 1, Math.max(0, Math.floor((e.clientX / innerWidth) * LANES)));
+  judgeLane(lane);
+});
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  if (!actx) {
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    master = actx.createGain();
+    master.gain.value = 0.8;
+    master.connect(actx.destination);
+  }
+  actx.resume();
+  document.getElementById('titleOverlay').classList.add('hidden');
+  document.getElementById('overOverlay').classList.add('hidden');
+  reset();
+  playing = true;
+});
+document.getElementById('retryBtn').addEventListener('click', () => {
+  document.getElementById('overOverlay').classList.add('hidden');
+  document.getElementById('titleOverlay').classList.add('hidden');
+  reset();
+  playing = true;
+});
+
+/* ---------- メインループ ---------- */
+const clock = new THREE.Clock();
+let ready = false;
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  if (playing) {
+    const now = actx.currentTime - songStart;
+
+    // 音のスケジュール（1.5 秒先まで）
+    const horizon = (now + 1.5) / BEAT;
+    while (schedBeat < BARS * 4 && schedBeat < horizon) {
+      const t = songStart + schedBeat * BEAT;
+      if (t > actx.currentTime) {
+        kick(t);
+        hat(t + BEAT / 2);
+        if (schedBeat % 4 === 0) bass(t, [55, 55, 44, 49][(schedBeat / 4) % 4 | 0], BEAT * 2);
+      }
+      schedBeat++;
+    }
+    // ノーツのスポーン（2.8 秒先の分まで）
+    while (chartIdx < chart.length && chart[chartIdx].beat * BEAT < now + 2.8) {
+      spawnNote(chart[chartIdx].lane, chart[chartIdx].beat * BEAT);
+      chartIdx++;
+    }
+    // ノーツ移動 & ミス判定
+    for (let i = notes.length - 1; i >= 0; i--) {
+      const n = notes[i];
+      n.mesh.position.z = HIT_Z - (n.hitTime - now) * NOTE_SPEED;
+      if (!n.judged && now - n.hitTime > GOOD_W) {
+        n.judged = true;
+        scene.remove(n.mesh);
+        combo = 0;
+        comboEl.textContent = '';
+        showJudge('MISS', '#ff7a9e');
+      }
+      if (n.judged) notes.splice(i, 1);
+    }
+    // 曲終了（全小節 + 余韻）
+    if (now > BARS * 4 * BEAT + 1.2) finish();
+  }
+
+  // フラッシュ減衰
+  for (const f of flashes) f.material.opacity = Math.max(0, f.material.opacity - dt * 3);
+  // ヒットラインの脈動
+  if (actx && playing) {
+    const beatPhase = ((actx.currentTime - songStart) / BEAT) % 1;
+    hitLine.material.color.setScalar(0.75 + Math.max(0, 0.25 - beatPhase * 0.6));
+  }
+
+  renderer.render(scene, camera);
+  if (!ready) { console.log('[site] ready'); ready = true; }
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

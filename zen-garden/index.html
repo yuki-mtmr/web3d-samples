@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>枯山水 — Zen Garden</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🪨</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@400;700&display=swap" rel="stylesheet">
+  <script type="importmap">
+  {"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
+  </script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #f2ede2;
+      font-family: 'Shippori Mincho B1', serif;
+      color: #3a362e;
+    }
+    #canvas { display: block; width: 100%; height: 100%; }
+
+    /* Header: Title & Caption */
+    .header {
+      position: absolute;
+      top: 3rem;
+      right: 3rem;
+      text-align: right;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .title {
+      writing-mode: vertical-rl;
+      text-orientation: mixed;
+      font-size: 4rem;
+      font-weight: 700;
+      letter-spacing: 0.3em;
+      color: #3a362e;
+      line-height: 1.2;
+    }
+    .caption {
+      font-size: 0.9rem;
+      margin-top: 1rem;
+      letter-spacing: 0.05em;
+      color: #5a5550;
+    }
+
+    /* Poem: Bottom-Left */
+    .poem {
+      position: absolute;
+      bottom: 3rem;
+      left: 3rem;
+      max-width: 200px;
+      font-size: 0.85rem;
+      line-height: 1.8;
+      color: #6a655a;
+      pointer-events: none;
+    }
+
+    /* Breathing Indicator: Bottom-Center */
+    .breathing-container {
+      position: absolute;
+      bottom: 2.5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .breathing-circle {
+      width: 16px;
+      height: 16px;
+      background: #c5a8a8;
+      border-radius: 50%;
+      margin: 0 auto 0.5rem;
+      animation: breathe 8s ease-in-out infinite;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .breathing-circle { animation: none; }
+    }
+    @keyframes breathe {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.15); }
+    }
+    .breathing-label {
+      font-size: 0.7rem;
+      letter-spacing: 0.1em;
+      color: #8a7f75;
+    }
+
+    /* Hint Text: Fade-in */
+    .hint {
+      position: absolute;
+      bottom: 1.5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.8rem;
+      color: #a39d92;
+      pointer-events: none;
+      animation: fadeIn 4s ease-out 2s both;
+      letter-spacing: 0.05em;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 0.7; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <div class="header">
+    <div class="title">枯山水</div>
+    <div class="caption">音のない庭を、眺める。</div>
+  </div>
+
+  <div class="poem">
+    <div>石は時を</div>
+    <div>砂は風を</div>
+    <div>影を結ぶ</div>
+  </div>
+
+  <div class="breathing-container">
+    <div class="breathing-circle"></div>
+    <div class="breathing-label">呼吸</div>
+  </div>
+
+  <div class="hint">砂をクリックすると波紋</div>
+
+  <script type="module">
+    import * as THREE from 'three';
+
+    // ============================================
+    // INIT & SCENE
+    // ============================================
+    const canvas = document.getElementById('canvas');
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+
+    // Clamp pixelRatio to 2
+    const dpr = Math.min(window.devicePixelRatio, 2);
+    renderer.setPixelRatio(dpr);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setClearColor(0xf2ede2, 1);
+
+    // Camera position & look-at
+    camera.position.set(0, 6.5, 8.5);
+    camera.lookAt(0, 0, -0.5);
+
+    // ============================================
+    // CANVAS TEXTURE: RAKED SAND PATTERN
+    // ============================================
+    function createSandTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 384;
+      const ctx = canvas.getContext('2d');
+
+      // Base color
+      ctx.fillStyle = '#e8e2d4';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Raked pattern: concentric circles + wavy lines
+      const stonePos1 = { x: 256 + 128, y: 192 }; // offset for stone at (-3, 0, -1)
+      const stonePos2 = { x: 256 - 128, y: 192 + 128 }; // offset for stone at (2.5, 0, -2.5)
+
+      ctx.strokeStyle = 'rgba(160, 150, 130, 0.5)';
+      ctx.lineWidth = 3;
+
+      // Concentric circles around stones
+      for (let i = 0; i < 4; i++) {
+        ctx.beginPath();
+        ctx.arc(stonePos1.x, stonePos1.y, 30 + i * 20, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(stonePos2.x, stonePos2.y, 30 + i * 20, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // Wavy horizontal lines across garden (multiple passes)
+      for (let offset = 0; offset < 32; offset += 8) {
+        ctx.beginPath();
+        let y = 50 + offset;
+        ctx.moveTo(0, y);
+        for (let x = 0; x <= canvas.width; x += 20) {
+          y = 50 + offset + Math.sin(x * 0.01) * 15;
+          ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      return texture;
+    }
+
+    // ============================================
+    // SAND PLANE
+    // ============================================
+    const sandGeo = new THREE.PlaneGeometry(24, 16);
+    const sandTex = createSandTexture();
+    const sandMat = new THREE.MeshStandardMaterial({
+      map: sandTex,
+      roughness: 1,
+      metalness: 0
+    });
+    const sand = new THREE.Mesh(sandGeo, sandMat);
+    sand.rotation.x = -Math.PI / 2; // Rotate flat
+    sand.position.y = 0;
+    scene.add(sand);
+
+    // ============================================
+    // STONES & MOSS RINGS
+    // ============================================
+    const stoneGroups = [
+      { pos: new THREE.Vector3(-3, 0, -1), stoneCount: 1 },
+      { pos: new THREE.Vector3(2.5, 0, -2.5), stoneCount: 2 },
+      { pos: new THREE.Vector3(0.5, 0, 1.5), stoneCount: 1 }
+    ];
+
+    stoneGroups.forEach(group => {
+      const groupMesh = new THREE.Group();
+      groupMesh.position.copy(group.pos);
+
+      for (let i = 0; i < group.stoneCount; i++) {
+        const stoneGeo = new THREE.SphereGeometry(0.6 + Math.random() * 0.2, 16, 8);
+        const stoneMat = new THREE.MeshStandardMaterial({
+          color: 0x4a4a48,
+          roughness: 0.95,
+          metalness: 0
+        });
+        const stone = new THREE.Mesh(stoneGeo, stoneMat);
+        stone.scale.y = 0.55;
+        stone.position.x = i * 0.8 - (group.stoneCount - 1) * 0.4;
+        stone.rotation.z = (Math.random() - 0.5) * 0.3;
+        groupMesh.add(stone);
+
+        // Moss ring under stone
+        const mossGeo = new THREE.CircleGeometry(stoneGeo.parameters.radius * 1.3, 32);
+        const mossMat = new THREE.MeshStandardMaterial({
+          color: 0x5a6b4a,
+          transparent: true,
+          opacity: 0.35,
+          metalness: 0,
+          roughness: 0.9
+        });
+        const moss = new THREE.Mesh(mossGeo, mossMat);
+        moss.position.copy(stone.position);
+        moss.position.y = 0.02;
+        moss.rotation.x = -Math.PI / 2;
+        groupMesh.add(moss);
+      }
+
+      scene.add(groupMesh);
+    });
+
+    // ============================================
+    // FALLING PETALS
+    // ============================================
+    const petals = [];
+    const petalCount = 40;
+
+    class Petal {
+      constructor() {
+        const geo = new THREE.PlaneGeometry(0.08, 0.06);
+        const mat = new THREE.MeshStandardMaterial({
+          color: 0xf5c6d0,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.9,
+          metalness: 0,
+          roughness: 0.8
+        });
+        this.mesh = new THREE.Mesh(geo, mat);
+        this.y = 6 + Math.random() * 3; // y 6-9
+        this.mesh.position.set(
+          (Math.random() - 0.5) * 24,
+          this.y,
+          (Math.random() - 0.5) * 16
+        );
+        this.mesh.rotation.z = Math.random() * Math.PI * 2;
+        this.phase = Math.random() * Math.PI * 2;
+        this.rotSpeedX = Math.random() * 2 - 1;
+        this.rotSpeedY = Math.random() * 2 - 1;
+        this.isResting = false;
+        scene.add(this.mesh);
+      }
+
+      update(dt, t, reducedMotion) {
+        if (this.isResting) return;
+
+        // Fall
+        this.mesh.position.y -= 0.25 * dt;
+
+        // Sway
+        if (!reducedMotion) {
+          this.mesh.position.x += Math.sin(t + this.phase) * 0.15 * dt;
+        }
+
+        // Tumble
+        if (!reducedMotion) {
+          this.mesh.rotation.x += this.rotSpeedX * dt;
+          this.mesh.rotation.y += this.rotSpeedY * dt;
+        }
+
+        // Reset to top or rest on sand
+        if (this.mesh.position.y < 0.05) {
+          if (Math.random() < 0.2) {
+            // Rest on sand
+            this.mesh.position.y = 0.02;
+            this.isResting = true;
+          } else {
+            // Reset to top
+            this.mesh.position.y = 6 + Math.random() * 3;
+            this.mesh.position.x = (Math.random() - 0.5) * 24;
+            this.mesh.position.z = (Math.random() - 0.5) * 16;
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < petalCount; i++) {
+      petals.push(new Petal());
+    }
+
+    // ============================================
+    // LIGHTING
+    // ============================================
+    const ambient = new THREE.AmbientLight(0xfff8ec, 0.85);
+    scene.add(ambient);
+
+    const directional = new THREE.DirectionalLight(0xfff2dd, 1.1);
+    directional.position.set(4, 8, 3);
+    scene.add(directional);
+
+    // ============================================
+    // RIPPLE EFFECT ON CLICK
+    // ============================================
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    const ripples = [];
+
+    class Ripple {
+      constructor(pos) {
+        const geo = new THREE.RingGeometry(0.1, 0.3, 32);
+        const mat = new THREE.MeshStandardMaterial({
+          color: 0xddd0c0,
+          emissive: 0xd0c0b0,
+          transparent: true,
+          opacity: 0.6,
+          metalness: 0,
+          roughness: 0.9,
+          side: THREE.DoubleSide
+        });
+        this.mesh = new THREE.Mesh(geo, mat);
+        this.mesh.position.copy(pos);
+        this.mesh.position.y = 0.05;
+        this.mesh.rotation.x = -Math.PI / 2;
+        this.startTime = performance.now();
+        this.duration = 2000;
+        scene.add(this.mesh);
+      }
+
+      update(now) {
+        const elapsed = now - this.startTime;
+        const progress = Math.min(elapsed / this.duration, 1);
+
+        this.mesh.scale.set(1 + progress * 2, 1 + progress * 2, 1);
+        this.mesh.material.opacity = 0.6 * (1 - progress);
+
+        if (progress >= 1) {
+          scene.remove(this.mesh);
+          this.mesh.geometry.dispose();
+          this.mesh.material.dispose();
+          return false;
+        }
+        return true;
+      }
+    }
+
+    window.addEventListener('click', (e) => {
+      // Ignore clicks on text/buttons
+      if (e.target !== canvas) return;
+
+      mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObject(sand);
+
+      if (intersects.length > 0) {
+        const point = intersects[0].point;
+        ripples.push(new Ripple(point));
+      }
+    });
+
+    // ============================================
+    // ANIMATION LOOP
+    // ============================================
+    let lastTime = performance.now();
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function animate(now) {
+      const dt = Math.min((now - lastTime) / 1000, 0.05);
+      lastTime = now;
+      const t = now / 1000;
+
+      // Camera drift (unless reduced-motion)
+      if (!prefersReducedMotion) {
+        camera.position.x = Math.sin(t * 0.05) * 0.5;
+      }
+
+      // Update petals
+      petals.forEach(p => p.update(dt, t, prefersReducedMotion));
+
+      // Update ripples
+      ripples.forEach((r, i) => {
+        if (!r.update(now)) {
+          ripples.splice(i, 1);
+        }
+      });
+
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+    animate(performance.now());
+
+    // ============================================
+    // RESIZE HANDLER
+    // ============================================
+    window.addEventListener('resize', () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    });
+
+    // Ready log
+    console.log('[site] ready');
+  </script>
+</body>
+</html>

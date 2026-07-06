@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Global Edge Network Analytics Dashboard">
+  <title>Global Edge Network — Data Globe</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400&family=Space+Grotesk:wght@600&display=swap" rel="stylesheet">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'IBM Plex Sans', sans-serif;
+      background: #060a12;
+      color: #e5eef0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+    }
+
+    /* Left column overlay */
+    .dashboard-column {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 28rem;
+      height: 100vh;
+      padding: 3rem 2.5rem;
+      background: rgba(6, 10, 18, 0.92);
+      backdrop-filter: blur(8px);
+      border-right: 1px solid rgba(74, 168, 255, 0.15);
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+    }
+
+    .eyebrow {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.75rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: #7a9fb8;
+      margin-bottom: 1rem;
+    }
+
+    .headline {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 2.2rem;
+      font-weight: 600;
+      line-height: 1.2;
+      margin-bottom: 0.5rem;
+      color: #e5eef0;
+    }
+
+    .headline .accent {
+      color: #22e5aa;
+    }
+
+    .subheadline {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.85rem;
+      color: #7a9fb8;
+      line-height: 1.6;
+      margin-bottom: 2.5rem;
+      font-weight: 400;
+    }
+
+    /* KPI Tiles */
+    .kpi-container {
+      display: flex;
+      gap: 1.2rem;
+      margin-bottom: 3rem;
+    }
+
+    .kpi-tile {
+      flex: 1;
+      border: 1px solid rgba(74, 168, 255, 0.3);
+      background: rgba(30, 58, 95, 0.25);
+      padding: 1.2rem 1rem;
+      border-radius: 0.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      transition: border-color 0.3s ease;
+    }
+
+    .kpi-tile:focus-visible {
+      outline: 2px solid #22e5aa;
+      outline-offset: 2px;
+    }
+
+    .kpi-value {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 1.6rem;
+      font-weight: 600;
+      color: #4aa8ff;
+      line-height: 1;
+    }
+
+    .kpi-label {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #7a9fb8;
+      font-weight: 400;
+    }
+
+    /* Bottom bar */
+    .status-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 3rem;
+      background: rgba(6, 10, 18, 0.95);
+      border-top: 1px solid rgba(74, 168, 255, 0.15);
+      display: flex;
+      align-items: center;
+      padding: 0 2.5rem;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.8rem;
+      color: #7a9fb8;
+      z-index: 5;
+    }
+
+    .region-list {
+      display: flex;
+      gap: 1.2rem;
+      align-items: center;
+    }
+
+    .region-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: color 0.3s ease;
+    }
+
+    .region-item.active {
+      color: #22e5aa;
+    }
+
+    .region-dot {
+      display: inline-block;
+      width: 0.4rem;
+      height: 0.4rem;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      body, * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    @media (max-width: 1200px) {
+      .dashboard-column {
+        width: 24rem;
+        padding: 2rem 1.8rem;
+      }
+      .headline {
+        font-size: 1.8rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="dashboard-column">
+    <div class="eyebrow">Global Edge Network</div>
+    <h1 class="headline">Real-time <span class="accent">Traffic</span> Analytics</h1>
+    <p class="subheadline">グローバルエッジネットワークを通じたリアルタイムデータトラフィック。世界中の 8 つの主要リージョンにおける遅延、可用性、スループットを監視中。</p>
+
+    <div class="kpi-container">
+      <div class="kpi-tile" tabindex="0">
+        <div class="kpi-value" id="kpi-latency">42ms</div>
+        <div class="kpi-label">Avg Latency</div>
+      </div>
+      <div class="kpi-tile" tabindex="0">
+        <div class="kpi-value" id="kpi-availability">99.99%</div>
+        <div class="kpi-label">Availability</div>
+      </div>
+      <div class="kpi-tile" tabindex="0">
+        <div class="kpi-value" id="kpi-throughput">8.2TB</div>
+        <div class="kpi-label">Throughput</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="status-bar">
+    <div class="region-list">
+      <div class="region-item active" data-region="0">
+        <span class="region-dot"></span>
+        <span>TOKYO</span>
+      </div>
+      <span style="color: rgba(122, 159, 184, 0.4);">・</span>
+      <div class="region-item" data-region="1">
+        <span class="region-dot"></span>
+        <span>FRANKFURT</span>
+      </div>
+      <span style="color: rgba(122, 159, 184, 0.4);">・</span>
+      <div class="region-item" data-region="2">
+        <span class="region-dot"></span>
+        <span>VIRGINIA</span>
+      </div>
+      <span style="color: rgba(122, 159, 184, 0.4);">・</span>
+      <div class="region-item" data-region="3">
+        <span class="region-dot"></span>
+        <span>SÃO PAULO</span>
+      </div>
+      <span style="color: rgba(122, 159, 184, 0.4);">・</span>
+      <div class="region-item" data-region="4">
+        <span class="region-dot"></span>
+        <span>SYDNEY</span>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // ===== Scene Setup =====
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 0, 7);
+
+    const canvas = document.createElement('canvas');
+    document.body.appendChild(canvas);
+
+    const renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: true,
+      alpha: false,
+    });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setClearColor(0x060a12, 1);
+
+    // ===== Resize Handler =====
+    function onWindowResize() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    }
+    window.addEventListener('resize', onWindowResize);
+
+    // ===== Lights =====
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    scene.add(ambientLight);
+
+    // ===== Globe Group =====
+    const globeGroup = new THREE.Group();
+    globeGroup.position.x = 1.2;
+    scene.add(globeGroup);
+
+    // Wireframe sphere
+    const wireframeGeom = new THREE.SphereGeometry(2, 36, 24);
+    const wireframeMat = new THREE.MeshBasicMaterial({
+      color: 0x1e3a5f,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.5,
+    });
+    const wireframeMesh = new THREE.Mesh(wireframeGeom, wireframeMat);
+    globeGroup.add(wireframeMesh);
+
+    // ===== Surface Dots =====
+    const dotsGeometry = new THREE.BufferGeometry();
+    const dotPositions = [];
+    const dotCount = 500;
+    for (let i = 0; i < dotCount; i++) {
+      const lat = Math.acos(Math.random() * 2 - 1) - Math.PI / 2;
+      const lon = Math.random() * Math.PI * 2;
+      const x = 2.01 * Math.cos(lat) * Math.cos(lon);
+      const y = 2.01 * Math.sin(lat);
+      const z = 2.01 * Math.cos(lat) * Math.sin(lon);
+      dotPositions.push(x, y, z);
+    }
+    dotsGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(dotPositions), 3));
+    const dotsMat = new THREE.PointsMaterial({
+      size: 0.03,
+      color: 0x4aa8ff,
+      transparent: true,
+      opacity: 0.8,
+      sizeAttenuation: true,
+    });
+    const dots = new THREE.Points(dotsGeometry, dotsMat);
+    globeGroup.add(dots);
+
+    // ===== Traffic Arcs =====
+    const arcGroup = new THREE.Group();
+    globeGroup.add(arcGroup);
+
+    function getRandomSurfacePoint() {
+      const lat = Math.acos(Math.random() * 2 - 1) - Math.PI / 2;
+      const lon = Math.random() * Math.PI * 2;
+      return new THREE.Vector3(
+        2 * Math.cos(lat) * Math.cos(lon),
+        2 * Math.sin(lat),
+        2 * Math.cos(lat) * Math.sin(lon)
+      );
+    }
+
+    const arcCount = 12;
+    const arcData = [];
+
+    for (let i = 0; i < arcCount; i++) {
+      const pointA = getRandomSurfacePoint();
+      const pointB = getRandomSurfacePoint();
+      const midpoint = pointA.clone().add(pointB).multiplyScalar(0.5).normalize().multiplyScalar(3.2);
+
+      const curve = new THREE.QuadraticBezierCurve3(pointA, midpoint, pointB);
+      const points = curve.getPoints(40);
+      const arcGeom = new THREE.BufferGeometry().setFromPoints(points);
+      const arcMat = new THREE.LineBasicMaterial({
+        color: 0x22e5aa,
+        transparent: true,
+        opacity: 0.35,
+        linewidth: 1,
+      });
+      const arcLine = new THREE.Line(arcGeom, arcMat);
+      arcGroup.add(arcLine);
+
+      arcData.push({
+        curve,
+        points,
+        speed: 0.3 + Math.random() * 0.3,
+        offset: Math.random(),
+        packet: null,
+        pointA,
+        pointB,
+      });
+    }
+
+    // ===== Packet Sprites =====
+    function createPacketTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const ctx = canvas.getContext('2d');
+      const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+      gradient.addColorStop(0, 'rgba(34, 229, 170, 0.9)');
+      gradient.addColorStop(0.5, 'rgba(34, 229, 170, 0.3)');
+      gradient.addColorStop(1, 'rgba(34, 229, 170, 0)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 64, 64);
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    const packetTexture = createPacketTexture();
+    const packetMat = new THREE.SpriteMaterial({
+      map: packetTexture,
+      color: 0x22e5aa,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+    });
+
+    for (let i = 0; i < arcData.length; i++) {
+      const packet = new THREE.Sprite(packetMat);
+      packet.scale.set(0.3, 0.3, 1);
+      arcGroup.add(packet);
+      arcData[i].packet = packet;
+    }
+
+    // ===== Glow Sprite Behind Globe =====
+    function createGlowTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+      const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+      gradient.addColorStop(0, 'rgba(74, 168, 255, 0.3)');
+      gradient.addColorStop(0.6, 'rgba(74, 168, 255, 0.08)');
+      gradient.addColorStop(1, 'rgba(74, 168, 255, 0)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 128, 128);
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    const glowTexture = createGlowTexture();
+    const glowMat = new THREE.SpriteMaterial({
+      map: glowTexture,
+      color: 0x4aa8ff,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+    });
+    const glowSprite = new THREE.Sprite(glowMat);
+    glowSprite.scale.set(4, 4, 1);
+    glowSprite.position.z = -0.5;
+    globeGroup.add(glowSprite);
+
+    // ===== Mouse Parallax =====
+    let mouseY = 0;
+    let targetRotationX = 0;
+    window.addEventListener('mousemove', (e) => {
+      mouseY = (e.clientY / window.innerHeight - 0.5) * 2;
+      targetRotationX = mouseY * 0.15;
+    });
+
+    // ===== KPI Animation =====
+    const kpiValues = [
+      { elem: 'kpi-latency', base: 42, unit: 'ms' },
+      { elem: 'kpi-availability', base: 99.99, unit: '%' },
+      { elem: 'kpi-throughput', base: 8.2, unit: 'TB' },
+    ];
+
+    function updateKPIs() {
+      kpiValues.forEach((kpi) => {
+        const elemId = document.getElementById(kpi.elem);
+        if (!elemId) return;
+        const variance = (Math.random() - 0.5) * (kpi.base * 0.02);
+        const value = Math.max(0, kpi.base + variance);
+        const formatted = value.toFixed(kpi.unit === 'TB' ? 1 : kpi.unit === '%' ? 2 : 0);
+        elemId.textContent = formatted + kpi.unit;
+      });
+    }
+
+    // Initial KPI update
+    updateKPIs();
+    if (!prefersReducedMotion) {
+      setInterval(updateKPIs, 2000);
+    }
+
+    // ===== Region Cycling =====
+    let activeRegionIndex = 0;
+    function cycleRegion() {
+      document.querySelectorAll('.region-item').forEach((item) => {
+        item.classList.remove('active');
+      });
+      activeRegionIndex = (activeRegionIndex + 1) % 5;
+      document.querySelector(`[data-region="${activeRegionIndex}"]`).classList.add('active');
+    }
+
+    if (!prefersReducedMotion) {
+      setInterval(cycleRegion, 3000);
+    }
+
+    // ===== Animation Loop =====
+    function animate() {
+      requestAnimationFrame(animate);
+
+      if (!prefersReducedMotion) {
+        globeGroup.rotation.y += 0.0016;
+        globeGroup.rotation.x += (targetRotationX - globeGroup.rotation.x) * 0.12;
+
+        // Update packet positions
+        arcData.forEach((arc) => {
+          const t = (arc.offset + performance.now() * 0.0005 * arc.speed) % 1;
+          const pos = arc.curve.getPoint(t);
+          arc.packet.position.copy(pos);
+        });
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    // ===== Ready Signal =====
+    console.log('[site] ready');
+  </script>
+</body>
+</html>

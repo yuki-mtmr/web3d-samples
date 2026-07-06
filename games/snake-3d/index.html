@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Neon Snake 3D</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐍</text></svg>">
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
+</script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Avenir Next', 'Hiragino Sans', sans-serif; }
+  body { background: #071410; touch-action: none; }
+  canvas { display: block; }
+  .hud {
+    position: fixed; top: 3vh; left: 0; right: 0; text-align: center;
+    color: #d8ffe8; pointer-events: none; z-index: 10;
+  }
+  .score { font-size: clamp(2rem, 6vw, 3rem); font-weight: 800; font-variant-numeric: tabular-nums; text-shadow: 0 0 18px rgba(74,222,128,0.5); }
+  .best { font-size: 0.78rem; letter-spacing: 0.25em; opacity: 0.6; }
+  .overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1.1rem;
+    color: #d8ffe8; z-index: 20; background: rgba(5, 14, 10, 0.66);
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    transition: opacity 0.3s ease, visibility 0.3s; text-align: center;
+  }
+  .overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
+  .overlay h1 { font-size: clamp(2rem, 7vw, 3.2rem); font-weight: 800; letter-spacing: 0.18em; color: #4ade80; text-shadow: 0 0 24px rgba(74,222,128,0.6); }
+  .overlay p { opacity: 0.85; font-size: 0.9rem; letter-spacing: 0.1em; line-height: 2; padding: 0 1.5rem; }
+  .overlay .result { font-size: clamp(3rem, 11vw, 5rem); font-weight: 800; line-height: 1; color: #4ade80; }
+  .btn {
+    pointer-events: auto; cursor: pointer; font-family: inherit;
+    background: #4ade80; color: #071410; border: none; border-radius: 999px;
+    padding: 0.9rem 2.8rem; font-size: 1rem; font-weight: 800; letter-spacing: 0.2em;
+    transition: transform 0.15s cubic-bezier(0.16,1,0.3,1), box-shadow 0.15s ease-out;
+  }
+  .btn:hover { transform: scale(1.05); box-shadow: 0 12px 32px rgba(74,222,128,0.35); }
+  .btn:focus-visible { outline: 2px solid #d8ffe8; outline-offset: 3px; }
+</style>
+</head>
+<body>
+<div class="hud">
+  <div class="score" id="score">0</div>
+  <div class="best" id="best"></div>
+</div>
+
+<div class="overlay" id="titleOverlay">
+  <h1>NEON SNAKE</h1>
+  <p>矢印キー / WASD で方向転換。スマホは進みたい方向へスワイプ。<br>光る実を食べるほど長く、速くなる。壁と自分にぶつけないように。</p>
+  <button class="btn" id="startBtn">START</button>
+</div>
+
+<div class="overlay hidden" id="overOverlay">
+  <p>FRUITS EATEN</p>
+  <div class="result" id="result">0</div>
+  <p id="newBest" style="color:#ffd24a"></p>
+  <button class="btn" id="retryBtn">RETRY</button>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x071410);
+scene.fog = new THREE.Fog(0x071410, 24, 50);
+
+const camera = new THREE.PerspectiveCamera(46, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 16.5, 10.5);
+camera.lookAt(0, 0, -0.6);
+
+scene.add(new THREE.AmbientLight(0x88ffcc, 0.55));
+const key = new THREE.DirectionalLight(0xffffff, 1.1);
+key.position.set(4, 10, 6);
+scene.add(key);
+
+/* ---------- 盤面 ---------- */
+const N = 15, CELL = 1.0;
+const toX = (c) => (c - N / 2 + 0.5) * CELL;
+const toZ = (r) => (r - N / 2 + 0.5) * CELL;
+
+{
+  // 市松のグリッド床
+  const c = document.createElement('canvas');
+  c.width = c.height = N * 16;
+  const g = c.getContext('2d');
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+    g.fillStyle = (i + j) % 2 === 0 ? '#0d211a' : '#0a1b15';
+    g.fillRect(j * 16, i * 16, 16, 16);
+  }
+  g.strokeStyle = 'rgba(74,222,128,0.14)';
+  g.lineWidth = 1;
+  for (let i = 0; i <= N; i++) {
+    g.beginPath(); g.moveTo(i * 16, 0); g.lineTo(i * 16, N * 16); g.stroke();
+    g.beginPath(); g.moveTo(0, i * 16); g.lineTo(N * 16, i * 16); g.stroke();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(N * CELL, N * CELL),
+    new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 })
+  );
+  floor.rotation.x = -Math.PI / 2;
+  scene.add(floor);
+  // 外周ネオン枠
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0x4ade80, emissive: 0x22c55e, emissiveIntensity: 1.1 });
+  const mk = (w, d, x, z) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.3, d), frameMat);
+    m.position.set(x, 0.15, z);
+    scene.add(m);
+  };
+  const L = N * CELL;
+  mk(L + 0.5, 0.25, 0, -L/2 - 0.13);
+  mk(L + 0.5, 0.25, 0, L/2 + 0.13);
+  mk(0.25, L + 0.5, -L/2 - 0.13, 0);
+  mk(0.25, L + 0.5, L/2 + 0.13, 0);
+}
+
+/* ---------- ヘビ ---------- */
+const segGeo = new THREE.BoxGeometry(0.82, 0.5, 0.82);
+const headMat = new THREE.MeshStandardMaterial({ color: 0x8affda, emissive: 0x4ade80, emissiveIntensity: 0.8, roughness: 0.4 });
+const bodyMat = new THREE.MeshStandardMaterial({ color: 0x34a86a, emissive: 0x1a7a44, emissiveIntensity: 0.4, roughness: 0.5 });
+let segMeshes = [];   // 先頭 = 頭
+
+function syncMeshes(body) {
+  while (segMeshes.length < body.length) {
+    const m = new THREE.Mesh(segGeo, segMeshes.length === 0 ? headMat : bodyMat);
+    scene.add(m);
+    segMeshes.push(m);
+  }
+  while (segMeshes.length > body.length) {
+    const m = segMeshes.pop();
+    scene.remove(m);
+  }
+  body.forEach((cell, k) => {
+    segMeshes[k].position.set(toX(cell.c), 0.25, toZ(cell.r));
+    segMeshes[k].material = k === 0 ? headMat : bodyMat;
+    const s = k === 0 ? 1 : Math.max(0.72, 1 - k * 0.012);
+    segMeshes[k].scale.setScalar(s);
+  });
+}
+
+/* ---------- 実（フルーツ） ---------- */
+const fruit = new THREE.Mesh(
+  new THREE.SphereGeometry(0.34, 16, 12),
+  new THREE.MeshStandardMaterial({ color: 0xff7ab8, emissive: 0xff2d8a, emissiveIntensity: 1.2 })
+);
+scene.add(fruit);
+let fruitCell = { r: 3, c: 3 };
+
+/* ---------- 効果音 ---------- */
+let actx = null;
+function eatSfx() {
+  if (!actx) return;
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'triangle';
+  o.frequency.setValueAtTime(660, actx.currentTime);
+  o.frequency.exponentialRampToValueAtTime(1320, actx.currentTime + 0.08);
+  g.gain.setValueAtTime(0.15, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.14);
+  o.connect(g).connect(actx.destination);
+  o.start(); o.stop(actx.currentTime + 0.15);
+}
+function crashSfx() {
+  if (!actx) return;
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'sawtooth';
+  o.frequency.setValueAtTime(220, actx.currentTime);
+  o.frequency.exponentialRampToValueAtTime(50, actx.currentTime + 0.4);
+  g.gain.setValueAtTime(0.2, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.45);
+  o.connect(g).connect(actx.destination);
+  o.start(); o.stop(actx.currentTime + 0.5);
+}
+
+/* ---------- ゲーム状態 ---------- */
+let playing = false;
+let body = [];              // {r, c} 先頭 = 頭
+let dir = { r: 0, c: 1 };   // 現在の進行方向
+let nextDir = { r: 0, c: 1 };
+let stepInterval = 0.22, stepT = 0;
+let eaten = 0;
+
+const scoreEl = document.getElementById('score');
+const bestEl = document.getElementById('best');
+const BEST_KEY = 'snake3d-best';
+let best = +(localStorage.getItem(BEST_KEY) || 0);
+bestEl.textContent = best ? `BEST ${best}` : '';
+
+function placeFruit() {
+  const free = [];
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    if (!body.some(s => s.r === r && s.c === c)) free.push({ r, c });
+  }
+  fruitCell = free[Math.random() * free.length | 0];
+  fruit.position.set(toX(fruitCell.c), 0.34, toZ(fruitCell.r));
+}
+
+function reset() {
+  body = [{ r: 7, c: 7 }, { r: 7, c: 6 }, { r: 7, c: 5 }];
+  dir = { r: 0, c: 1 };
+  nextDir = { r: 0, c: 1 };
+  stepInterval = 0.22; stepT = 0;
+  eaten = 0;
+  scoreEl.textContent = '0';
+  placeFruit();
+  syncMeshes(body);
+}
+
+function gameOver() {
+  playing = false;
+  crashSfx();
+  document.getElementById('result').textContent = eaten;
+  const nb = document.getElementById('newBest');
+  if (eaten > best) {
+    best = eaten;
+    localStorage.setItem(BEST_KEY, best);
+    nb.textContent = '✦ NEW BEST ✦';
+  } else nb.textContent = '';
+  bestEl.textContent = `BEST ${best}`;
+  setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 500);
+}
+
+function step() {
+  dir = nextDir;
+  const head = { r: body[0].r + dir.r, c: body[0].c + dir.c };
+  // 壁
+  if (head.r < 0 || head.r >= N || head.c < 0 || head.c >= N) return gameOver();
+  // 自分（しっぽは次のステップで空くので、食べない場合のみ末尾を除外して判定）
+  const willEat = head.r === fruitCell.r && head.c === fruitCell.c;
+  const checkBody = willEat ? body : body.slice(0, -1);
+  if (checkBody.some(s => s.r === head.r && s.c === head.c)) return gameOver();
+
+  body.unshift(head);
+  if (willEat) {
+    eaten++;
+    scoreEl.textContent = eaten;
+    stepInterval = Math.max(0.09, 0.22 - eaten * 0.006);
+    eatSfx();
+    placeFruit();
+  } else {
+    body.pop();
+  }
+  syncMeshes(body);
+}
+
+/* ---------- 入力 ---------- */
+function turn(r, c) {
+  // 真後ろへの反転は無視（現在の dir 基準）
+  if (r === -dir.r && c === -dir.c) return;
+  nextDir = { r, c };
+}
+addEventListener('keydown', (e) => {
+  const map = {
+    ArrowUp: [-1, 0], KeyW: [-1, 0],
+    ArrowDown: [1, 0], KeyS: [1, 0],
+    ArrowLeft: [0, -1], KeyA: [0, -1],
+    ArrowRight: [0, 1], KeyD: [0, 1],
+  };
+  const d = map[e.code];
+  if (d) { e.preventDefault(); turn(d[0], d[1]); }
+});
+// スワイプ
+let swipeStart = null;
+addEventListener('pointerdown', (e) => {
+  if (e.target && e.target.closest && e.target.closest('button')) return;
+  swipeStart = { x: e.clientX, y: e.clientY };
+});
+addEventListener('pointerup', (e) => {
+  if (!swipeStart) return;
+  const dx = e.clientX - swipeStart.x, dy = e.clientY - swipeStart.y;
+  swipeStart = null;
+  if (Math.hypot(dx, dy) < 24) return;
+  if (Math.abs(dx) > Math.abs(dy)) turn(0, dx > 0 ? 1 : -1);
+  else turn(dy > 0 ? 1 : -1, 0);
+});
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+  document.getElementById('titleOverlay').classList.add('hidden');
+  document.getElementById('overOverlay').classList.add('hidden');
+  reset();
+  playing = true;
+});
+document.getElementById('retryBtn').addEventListener('click', () => {
+  document.getElementById('overOverlay').classList.add('hidden');
+  reset();
+  playing = true;
+});
+
+/* ---------- メインループ ---------- */
+const clock = new THREE.Clock();
+let ready = false;
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+
+  if (playing) {
+    stepT += dt;
+    while (stepT >= stepInterval) {
+      stepT -= stepInterval;
+      step();
+      if (!playing) break;
+    }
+  }
+  // 実の浮遊
+  fruit.position.y = 0.34 + Math.sin(t * 3) * 0.08;
+  fruit.rotation.y += dt * 2;
+
+  renderer.render(scene, camera);
+  if (!ready) { console.log('[site] ready'); ready = true; }
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

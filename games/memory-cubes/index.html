@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Memory Cubes</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧊</text></svg>">
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
+</script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Avenir Next', 'Hiragino Sans', sans-serif; }
+  body { background: #0e1220; touch-action: none; }
+  canvas { display: block; }
+  .hud {
+    position: fixed; top: 3vh; left: 0; right: 0; text-align: center;
+    color: #e8ecfa; pointer-events: none; z-index: 10;
+  }
+  .round { font-size: clamp(2rem, 6vw, 3rem); font-weight: 800; }
+  .state { font-size: 0.85rem; letter-spacing: 0.3em; opacity: 0.7; min-height: 1.4em; }
+  .best { font-size: 0.75rem; letter-spacing: 0.25em; opacity: 0.55; }
+  .overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1.1rem;
+    color: #e8ecfa; z-index: 20; background: rgba(10, 12, 24, 0.66);
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    transition: opacity 0.3s ease, visibility 0.3s; text-align: center;
+  }
+  .overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
+  .overlay h1 { font-size: clamp(2rem, 7vw, 3.2rem); font-weight: 800; letter-spacing: 0.18em; color: #7ab8ff; text-shadow: 0 0 24px rgba(122,184,255,0.5); }
+  .overlay p { opacity: 0.85; font-size: 0.9rem; letter-spacing: 0.1em; line-height: 2; padding: 0 1.5rem; }
+  .overlay .result { font-size: clamp(3rem, 11vw, 5rem); font-weight: 800; line-height: 1; color: #7ab8ff; }
+  .btn {
+    pointer-events: auto; cursor: pointer; font-family: inherit;
+    background: #7ab8ff; color: #0e1220; border: none; border-radius: 999px;
+    padding: 0.9rem 2.8rem; font-size: 1rem; font-weight: 800; letter-spacing: 0.2em;
+    transition: transform 0.15s cubic-bezier(0.16,1,0.3,1), box-shadow 0.15s ease-out;
+  }
+  .btn:hover { transform: scale(1.05); box-shadow: 0 12px 32px rgba(122,184,255,0.35); }
+  .btn:focus-visible { outline: 2px solid #e8ecfa; outline-offset: 3px; }
+</style>
+</head>
+<body>
+<div class="hud">
+  <div class="round" id="round">—</div>
+  <div class="state" id="state"></div>
+  <div class="best" id="best"></div>
+</div>
+
+<div class="overlay" id="titleOverlay">
+  <h1>MEMORY CUBES</h1>
+  <p>光る順番を覚えて、同じ順にキューブをタップ。<br>1 ラウンドごとに 1 手ずつ長くなる。どこまで覚えられるか。</p>
+  <button class="btn" id="startBtn">START</button>
+</div>
+
+<div class="overlay hidden" id="overOverlay">
+  <p>REACHED ROUND</p>
+  <div class="result" id="result">0</div>
+  <p id="newBest" style="color:#ffd24a"></p>
+  <button class="btn" id="retryBtn">RETRY</button>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0e1220);
+
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 8.5, 8.5);
+camera.lookAt(0, 0, 0);
+
+scene.add(new THREE.AmbientLight(0xaabbee, 0.8));
+const key = new THREE.DirectionalLight(0xffffff, 1.0);
+key.position.set(4, 9, 5);
+scene.add(key);
+
+/* ---------- 9 つのキューブ ---------- */
+const CUBE_COLORS = [
+  0xff5a7a, 0xff9a4d, 0xffd24a,
+  0x4ade80, 0x4aa8ff, 0xc79aff,
+  0xff7ab8, 0x8affda, 0xf0f0f0,
+];
+const NOTE_FREQS = [261.6, 293.7, 329.6, 349.2, 392.0, 440.0, 493.9, 523.3, 587.3];
+const cubes = [];   // { mesh, baseEmissive, flash }
+{
+  const geo = new THREE.BoxGeometry(1.6, 0.7, 1.6);
+  for (let i = 0; i < 9; i++) {
+    const r = Math.floor(i / 3), c = i % 3;
+    const mat = new THREE.MeshStandardMaterial({
+      color: CUBE_COLORS[i],
+      emissive: CUBE_COLORS[i],
+      emissiveIntensity: 0.12,
+      roughness: 0.45,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set((c - 1) * 2.1, 0.35, (r - 1) * 2.1);
+    mesh.userData.idx = i;
+    scene.add(mesh);
+    cubes.push({ mesh, flash: 0 });
+  }
+  const base = new THREE.Mesh(
+    new THREE.BoxGeometry(7.4, 0.3, 7.4),
+    new THREE.MeshStandardMaterial({ color: 0x1a2136, roughness: 0.9 })
+  );
+  base.position.y = -0.2;
+  scene.add(base);
+}
+
+/* ---------- 音 ---------- */
+let actx = null;
+function tone(idx, dur = 0.35, vol = 0.16) {
+  if (!actx) return;
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'triangle';
+  o.frequency.value = NOTE_FREQS[idx];
+  g.gain.setValueAtTime(vol, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + dur);
+  o.connect(g).connect(actx.destination);
+  o.start(); o.stop(actx.currentTime + dur + 0.02);
+}
+function buzz() {
+  if (!actx) return;
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'sawtooth'; o.frequency.value = 110;
+  g.gain.setValueAtTime(0.2, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.5);
+  o.connect(g).connect(actx.destination);
+  o.start(); o.stop(actx.currentTime + 0.52);
+}
+
+/* ---------- ゲーム状態 ---------- */
+// state: 'idle' | 'showing' | 'input' | 'over'
+let state = 'idle';
+let sequence = [];
+let inputPos = 0;
+let round = 0;
+let showTimer = 0, showIdx = 0;
+
+const roundEl = document.getElementById('round');
+const stateEl = document.getElementById('state');
+const bestEl = document.getElementById('best');
+const BEST_KEY = 'memory-cubes-best';
+let best = +(localStorage.getItem(BEST_KEY) || 0);
+bestEl.textContent = best ? `BEST ROUND ${best}` : '';
+
+function flashCube(idx, withTone = true) {
+  cubes[idx].flash = 1;
+  if (withTone) tone(idx);
+}
+
+function nextRound() {
+  round++;
+  roundEl.textContent = `ROUND ${round}`;
+  sequence.push(Math.random() * 9 | 0);
+  inputPos = 0;
+  state = 'showing';
+  stateEl.textContent = 'よく見て…';
+  showIdx = 0;
+  showTimer = 0.8;   // 最初の点灯までの間
+}
+
+function startGame() {
+  sequence = [];
+  round = 0;
+  state = 'idle';
+  nextRound();
+}
+
+function gameOver() {
+  state = 'over';
+  buzz();
+  stateEl.textContent = '';
+  document.getElementById('result').textContent = round;
+  const nb = document.getElementById('newBest');
+  if (round > best) {
+    best = round;
+    localStorage.setItem(BEST_KEY, best);
+    nb.textContent = '✦ NEW BEST ✦';
+  } else nb.textContent = '';
+  bestEl.textContent = `BEST ROUND ${best}`;
+  setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 700);
+}
+
+/* ---------- 入力（レイキャスト） ---------- */
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+addEventListener('pointerdown', (e) => {
+  if (e.target && e.target.closest && e.target.closest('button')) return;
+  if (state !== 'input') return;
+  ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  const hits = raycaster.intersectObjects(cubes.map(c => c.mesh));
+  if (!hits.length) return;
+  const idx = hits[0].object.userData.idx;
+  flashCube(idx);
+  if (idx === sequence[inputPos]) {
+    inputPos++;
+    if (inputPos >= sequence.length) {
+      state = 'idle';
+      stateEl.textContent = '正解！';
+      setTimeout(() => { if (state === 'idle') nextRound(); }, 900);
+    }
+  } else {
+    gameOver();
+  }
+});
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+  document.getElementById('titleOverlay').classList.add('hidden');
+  document.getElementById('overOverlay').classList.add('hidden');
+  startGame();
+});
+document.getElementById('retryBtn').addEventListener('click', () => {
+  document.getElementById('overOverlay').classList.add('hidden');
+  startGame();
+});
+
+/* ---------- メインループ ---------- */
+const clock = new THREE.Clock();
+let ready = false;
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  // シーケンス再生
+  if (state === 'showing') {
+    showTimer -= dt;
+    if (showTimer <= 0) {
+      if (showIdx < sequence.length) {
+        flashCube(sequence[showIdx]);
+        showIdx++;
+        // ラウンドが進むほど提示テンポが速くなる
+        showTimer = Math.max(0.34, 0.62 - round * 0.02);
+      } else {
+        state = 'input';
+        stateEl.textContent = 'あなたの番';
+      }
+    }
+  }
+
+  // フラッシュ減衰 + 浮き上がり
+  for (const c of cubes) {
+    c.flash = Math.max(0, c.flash - dt * 2.6);
+    c.mesh.material.emissiveIntensity = 0.12 + c.flash * 1.5;
+    c.mesh.position.y = 0.35 + c.flash * 0.3;
+  }
+
+  renderer.render(scene, camera);
+  if (!ready) { console.log('[site] ready'); ready = true; }
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
