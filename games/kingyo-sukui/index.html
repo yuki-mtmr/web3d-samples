@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>金魚すくい</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐠</text></svg>">
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
+</script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Hiragino Mincho ProN', serif; }
+  body { background: #10222e; touch-action: none; cursor: none; }
+  canvas { display: block; }
+  .hud {
+    position: fixed; top: 3vh; left: 0; right: 0; text-align: center;
+    color: #f3ead8; pointer-events: none; z-index: 10;
+  }
+  .score { font-size: clamp(2rem, 6vw, 3rem); font-weight: 700; text-shadow: 0 2px 12px rgba(0,0,0,0.5); }
+  .poi-hp { font-size: 1.1rem; letter-spacing: 0.4em; margin-top: 0.2rem; }
+  .best { font-size: 0.75rem; letter-spacing: 0.25em; opacity: 0.6; margin-top: 0.2rem; }
+  .overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1.1rem;
+    color: #f3ead8; z-index: 20; background: rgba(6, 14, 20, 0.62);
+    backdrop-filter: blur(6px); transition: opacity 0.3s ease; text-align: center;
+    cursor: auto;
+  }
+  .overlay.hidden { opacity: 0; pointer-events: none; }
+  .overlay h1 { font-size: clamp(2.2rem, 8vw, 3.4rem); letter-spacing: 0.3em; }
+  .overlay p { opacity: 0.85; font-size: 0.9rem; letter-spacing: 0.1em; line-height: 2; padding: 0 1.5rem; }
+  .overlay .result { font-size: clamp(3rem, 11vw, 5rem); font-weight: 700; line-height: 1; color: #ff8a5a; }
+  .btn {
+    pointer-events: auto; cursor: pointer; font-family: inherit;
+    background: #e0432d; color: #f3ead8; border: 1px solid rgba(243,234,216,0.4);
+    border-radius: 999px; padding: 0.85rem 2.6rem; font-size: 1rem; letter-spacing: 0.3em;
+    transition: transform 0.15s cubic-bezier(0.16,1,0.3,1), background 0.15s ease-out;
+  }
+  .btn:hover { transform: scale(1.05); background: #ff5a3a; }
+</style>
+</head>
+<body>
+<div class="hud">
+  <div class="score"><span id="score">0</span> 匹</div>
+  <div class="poi-hp" id="poiHp"></div>
+  <div class="best" id="best"></div>
+</div>
+
+<div class="overlay" id="titleOverlay">
+  <h1>金魚すくい</h1>
+  <p>ポイ（紙の網）をポインタで動かし、押して沈め、離してすくう。<br>沈めるたびに紙は破れていく。破れ切るまでに何匹すくえるか。</p>
+  <button class="btn" id="startBtn">はじめる</button>
+</div>
+
+<div class="overlay hidden" id="overOverlay">
+  <p>ポイが破れた — すくった金魚</p>
+  <div class="result" id="result">0</div>
+  <p id="newBest" style="color:#e8b04b"></p>
+  <button class="btn" id="retryBtn">もう一枚</button>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x10222e);
+
+const camera = new THREE.PerspectiveCamera(46, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 9.5, 5.2);
+camera.lookAt(0, 0, -0.4);
+
+scene.add(new THREE.AmbientLight(0xbfd8e8, 0.9));
+const sun = new THREE.DirectionalLight(0xfff2d8, 1.5);
+sun.position.set(3, 10, 4);
+scene.add(sun);
+
+/* ---------- 効果音 ---------- */
+let actx = null;
+function plop(freq = 300, vol = 0.15) {
+  if (!actx) return;
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(freq, actx.currentTime);
+  o.frequency.exponentialRampToValueAtTime(freq * 0.4, actx.currentTime + 0.12);
+  g.gain.setValueAtTime(vol, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.18);
+  o.connect(g).connect(actx.destination);
+  o.start(); o.stop(actx.currentTime + 0.2);
+}
+function chime() {
+  if (!actx) return;
+  [880, 1174, 1568].forEach((f, i) => {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = 'triangle'; o.frequency.value = f;
+    const t0 = actx.currentTime + i * 0.06;
+    g.gain.setValueAtTime(0.12, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.5);
+    o.connect(g).connect(actx.destination);
+    o.start(t0); o.stop(t0 + 0.55);
+  });
+}
+function ripSound() {
+  if (!actx) return;
+  const len = actx.sampleRate * 0.25;
+  const buf = actx.createBuffer(1, len, actx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const src = actx.createBufferSource();
+  src.buffer = buf;
+  const bp = actx.createBiquadFilter();
+  bp.type = 'bandpass'; bp.frequency.value = 1800; bp.Q.value = 1.2;
+  const g = actx.createGain(); g.gain.value = 0.22;
+  src.connect(bp).connect(g).connect(actx.destination);
+  src.start();
+}
+
+/* ---------- 水槽 ---------- */
+const POOL_R = 5.2;
+{
+  // 縁（たらい）
+  const rim = new THREE.Mesh(
+    new THREE.TorusGeometry(POOL_R + 0.25, 0.32, 14, 60),
+    new THREE.MeshStandardMaterial({ color: 0x3a6ea8, roughness: 0.55 })
+  );
+  rim.rotation.x = Math.PI / 2;
+  rim.position.y = 0.15;
+  scene.add(rim);
+  // 底
+  const bottomTex = (() => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 256;
+    const g = c.getContext('2d');
+    g.fillStyle = '#cfe3ec';
+    g.fillRect(0, 0, 256, 256);
+    // 底の水紋もよう
+    g.strokeStyle = 'rgba(120, 170, 200, 0.5)';
+    g.lineWidth = 3;
+    for (let i = 0; i < 14; i++) {
+      g.beginPath();
+      g.arc(Math.random()*256, Math.random()*256, 14 + Math.random()*36, 0, Math.PI*2);
+      g.stroke();
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  })();
+  const bottom = new THREE.Mesh(
+    new THREE.CircleGeometry(POOL_R + 0.1, 48),
+    new THREE.MeshStandardMaterial({ map: bottomTex, roughness: 0.9 })
+  );
+  bottom.rotation.x = -Math.PI / 2;
+  bottom.position.y = -0.9;
+  scene.add(bottom);
+  // 水面
+  const water = new THREE.Mesh(
+    new THREE.CircleGeometry(POOL_R, 48),
+    new THREE.MeshStandardMaterial({
+      color: 0x8fd0e8, transparent: true, opacity: 0.38, roughness: 0.1, metalness: 0.1,
+    })
+  );
+  water.rotation.x = -Math.PI / 2;
+  water.position.y = 0;
+  scene.add(water);
+}
+
+/* ---------- 金魚 ---------- */
+const fishes = [];   // { group, tail, vel, speed, turnT, caught }
+const FISH_COLORS = [0xff4a1a, 0xff6a2a, 0xffffff, 0xff3a3a, 0xffa03a];
+
+function makeFish() {
+  const g = new THREE.Group();
+  const color = FISH_COLORS[Math.random() * FISH_COLORS.length | 0];
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.4 });
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), mat);
+  body.scale.set(1.7, 0.85, 1);
+  g.add(body);
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.3, 8), mat);
+  tail.rotation.z = Math.PI / 2;
+  tail.position.x = -0.36;
+  g.add(tail);
+  // 白い個体は頭が赤い（丹頂）
+  if (color === 0xffffff) {
+    const crown = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0xff3a2a, roughness: 0.4 }));
+    crown.position.set(0.14, 0.1, 0);
+    g.add(crown);
+  }
+  const a = Math.random() * Math.PI * 2;
+  const r = Math.random() * (POOL_R - 1);
+  g.position.set(Math.cos(a) * r, -0.28 - Math.random() * 0.25, Math.sin(a) * r);
+  scene.add(g);
+  fishes.push({
+    group: g, tail,
+    vel: new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize(),
+    speed: 0.7 + Math.random() * 0.9,
+    turnT: 0,
+    caught: false,
+    ph: Math.random() * Math.PI * 2,
+  });
+}
+for (let i = 0; i < 10; i++) makeFish();
+
+/* ---------- ポイ ---------- */
+const poi = new THREE.Group();
+const poiRing = new THREE.Mesh(
+  new THREE.TorusGeometry(0.62, 0.05, 10, 40),
+  new THREE.MeshStandardMaterial({ color: 0xd83a2a, roughness: 0.6 })
+);
+poiRing.rotation.x = Math.PI / 2;
+poi.add(poiRing);
+const poiPaperMat = new THREE.MeshStandardMaterial({
+  color: 0xffffff, transparent: true, opacity: 0.85, roughness: 0.9, side: THREE.DoubleSide,
+});
+const poiPaper = new THREE.Mesh(new THREE.CircleGeometry(0.6, 30), poiPaperMat);
+poiPaper.rotation.x = -Math.PI / 2;
+poi.add(poiPaper);
+const handle = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.045, 0.045, 1.4, 8),
+  new THREE.MeshStandardMaterial({ color: 0xd83a2a, roughness: 0.6 })
+);
+handle.rotation.x = Math.PI / 2.6;
+handle.position.set(0, 0.28, 1.05);
+poi.add(handle);
+poi.position.set(0, 0.55, 0);
+scene.add(poi);
+const POI_R = 0.62;
+
+/* ---------- 波紋 ---------- */
+const ripples = [];
+function ripple(x, z, big = false) {
+  const m = new THREE.Mesh(
+    new THREE.RingGeometry(0.2, 0.26, 32),
+    new THREE.MeshBasicMaterial({ color: 0xdff2fa, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+  );
+  m.rotation.x = -Math.PI / 2;
+  m.position.set(x, 0.02, z);
+  scene.add(m);
+  ripples.push({ mesh: m, age: 0, life: big ? 0.9 : 0.6, grow: big ? 4.5 : 2.6 });
+}
+
+/* ---------- ゲーム状態 ---------- */
+let playing = false;
+let score = 0;
+let poiHP = 5;
+let dipping = false;   // 押している間 true
+let poiY = 0.55;
+
+const scoreEl = document.getElementById('score');
+const hpEl = document.getElementById('poiHp');
+const bestEl = document.getElementById('best');
+const BEST_KEY = 'kingyo-best';
+let best = +(localStorage.getItem(BEST_KEY) || 0);
+bestEl.textContent = best ? `これまでの最高 ${best} 匹` : '';
+
+function drawHP() {
+  hpEl.textContent = '紙 ' + '●'.repeat(poiHP) + '○'.repeat(Math.max(0, 5 - poiHP));
+  poiPaperMat.opacity = 0.25 + poiHP * 0.12;
+}
+
+function reset() {
+  score = 0; poiHP = 5; dipping = false;
+  scoreEl.textContent = '0';
+  drawHP();
+  for (const f of fishes) {
+    if (f.caught) {
+      f.caught = false;
+      const a = Math.random() * Math.PI * 2, r = Math.random() * (POOL_R - 1);
+      f.group.position.set(Math.cos(a) * r, -0.3, Math.sin(a) * r);
+      f.group.visible = true;
+    }
+  }
+}
+
+function gameOver() {
+  playing = false;
+  document.getElementById('result').textContent = score;
+  const nb = document.getElementById('newBest');
+  if (score > best) {
+    best = score;
+    localStorage.setItem(BEST_KEY, best);
+    nb.textContent = '✦ 屋台の主人もびっくり ✦';
+  } else nb.textContent = '';
+  bestEl.textContent = `これまでの最高 ${best} 匹`;
+  setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 600);
+}
+
+/* ---------- 入力 ---------- */
+const raycaster = new THREE.Raycaster();
+const waterPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const ndc = new THREE.Vector2();
+const hit = new THREE.Vector3();
+let poiTX = 0, poiTZ = 0;
+
+addEventListener('pointermove', (e) => {
+  ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  if (raycaster.ray.intersectPlane(waterPlane, hit)) {
+    const r = Math.hypot(hit.x, hit.z);
+    const max = POOL_R - 0.5;
+    if (r > max) { hit.x *= max / r; hit.z *= max / r; }
+    poiTX = hit.x; poiTZ = hit.z;
+  }
+});
+addEventListener('pointerdown', (e) => {
+  if (e.target && e.target.closest && e.target.closest('button')) return;
+  if (!playing || dipping) return;
+  dipping = true;
+  plop(260, 0.18);
+  ripple(poi.position.x, poi.position.z);
+});
+addEventListener('pointerup', () => {
+  if (!playing || !dipping) return;
+  dipping = false;
+  // すくい上げ判定
+  let got = 0;
+  for (const f of fishes) {
+    if (f.caught) continue;
+    const dx = f.group.position.x - poi.position.x;
+    const dz = f.group.position.z - poi.position.z;
+    if (Math.hypot(dx, dz) < POI_R * 0.92 && f.group.position.y > -0.55) {
+      f.caught = true; got++;
+      // すくわれた金魚は跳ねて消える
+      f.jump = { t: 0, x: f.group.position.x, z: f.group.position.z };
+    }
+  }
+  if (got > 0) {
+    score += got;
+    scoreEl.textContent = score;
+    chime();
+  } else {
+    plop(180, 0.1);
+  }
+  // 紙の消耗 — すくうたびに 1、空振りは運が良ければ無傷
+  if (got > 0 || Math.random() < 0.6) {
+    poiHP--;
+    ripSound();
+    drawHP();
+    if (poiHP <= 0) gameOver();
+  }
+  ripple(poi.position.x, poi.position.z, true);
+});
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+  document.getElementById('titleOverlay').classList.add('hidden');
+  reset();
+  playing = true;
+});
+document.getElementById('retryBtn').addEventListener('click', () => {
+  document.getElementById('overOverlay').classList.add('hidden');
+  reset();
+  playing = true;
+});
+
+/* ---------- メインループ ---------- */
+const clock = new THREE.Clock();
+let ready = false;
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+
+  // ポイ追従（0.2 = きびきび）と上下
+  poi.position.x += (poiTX - poi.position.x) * 0.2;
+  poi.position.z += (poiTZ - poi.position.z) * 0.2;
+  const targetY = dipping ? -0.42 : 0.55;
+  poiY += (targetY - poiY) * 0.25;
+  poi.position.y = poiY;
+
+  // 金魚
+  for (const f of fishes) {
+    if (f.caught) {
+      if (f.jump) {
+        f.jump.t += dt;
+        const jt = f.jump.t;
+        f.group.position.y = -0.3 + jt * 6 - jt * jt * 9;
+        f.group.rotation.z += dt * 10;
+        f.group.scale.setScalar(Math.max(0.01, 1 - jt * 0.9));
+        if (jt > 1.1) { f.group.visible = false; f.jump = null; }
+      }
+      continue;
+    }
+    // ポイが沈んでいる間は逃げる
+    const dxp = f.group.position.x - poi.position.x;
+    const dzp = f.group.position.z - poi.position.z;
+    const dp = Math.hypot(dxp, dzp);
+    if (dipping && dp < 2.2) {
+      f.vel.x += (dxp / dp) * dt * 3.2;
+      f.vel.z += (dzp / dp) * dt * 3.2;
+    }
+    // ゆらぎ旋回
+    f.turnT -= dt;
+    if (f.turnT <= 0) {
+      f.turnT = 0.6 + Math.random() * 1.6;
+      const a = (Math.random() - 0.5) * 1.4;
+      const cos = Math.cos(a), sin = Math.sin(a);
+      const { x, z } = f.vel;
+      f.vel.x = x * cos - z * sin;
+      f.vel.z = x * sin + z * cos;
+    }
+    // 縁で内側へ
+    const r = Math.hypot(f.group.position.x, f.group.position.z);
+    if (r > POOL_R - 0.7) {
+      f.vel.x += (-f.group.position.x / r) * dt * 4;
+      f.vel.z += (-f.group.position.z / r) * dt * 4;
+    }
+    f.vel.normalize();
+    f.group.position.x += f.vel.x * f.speed * dt;
+    f.group.position.z += f.vel.z * f.speed * dt;
+    f.group.position.y = -0.3 + Math.sin(t * 2 + f.ph) * 0.06;
+    f.group.rotation.y = Math.atan2(-f.vel.z, f.vel.x);
+    // 尾びれ
+    f.tail.rotation.y = Math.sin(t * 9 + f.ph) * 0.6;
+  }
+
+  // 波紋
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    const rp = ripples[i];
+    rp.age += dt;
+    const k = rp.age / rp.life;
+    rp.mesh.scale.setScalar(1 + k * rp.grow);
+    rp.mesh.material.opacity = 0.7 * (1 - k);
+    if (k >= 1) {
+      scene.remove(rp.mesh);
+      rp.mesh.geometry.dispose();
+      rp.mesh.material.dispose();
+      ripples.splice(i, 1);
+    }
+  }
+
+  renderer.render(scene, camera);
+  if (!ready) { console.log('[site] ready'); ready = true; }
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

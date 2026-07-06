@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Tilt Maze — 玉ころがし</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎱</text></svg>">
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
+</script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Avenir Next', 'Hiragino Sans', sans-serif; }
+  body { background: #1a1410; touch-action: none; }
+  canvas { display: block; }
+  .hud {
+    position: fixed; top: 3vh; left: 0; right: 0; text-align: center;
+    color: #f0e8d8; pointer-events: none; z-index: 10;
+  }
+  .level { font-size: clamp(1.4rem, 4.5vw, 2rem); font-weight: 700; letter-spacing: 0.15em; }
+  .timer { font-size: clamp(2rem, 6vw, 3rem); font-weight: 800; font-variant-numeric: tabular-nums; }
+  .best { font-size: 0.75rem; letter-spacing: 0.25em; opacity: 0.6; }
+  .overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1.1rem;
+    color: #f0e8d8; z-index: 20; background: rgba(16, 12, 8, 0.66);
+    backdrop-filter: blur(6px); transition: opacity 0.3s ease; text-align: center;
+  }
+  .overlay.hidden { opacity: 0; pointer-events: none; }
+  .overlay h1 { font-size: clamp(2rem, 7vw, 3.2rem); font-weight: 800; letter-spacing: 0.12em; }
+  .overlay p { opacity: 0.85; font-size: 0.9rem; letter-spacing: 0.1em; line-height: 2; padding: 0 1.5rem; }
+  .overlay .result { font-size: clamp(2.6rem, 10vw, 4.5rem); font-weight: 800; line-height: 1; color: #e8b04b; font-variant-numeric: tabular-nums; }
+  .btn {
+    pointer-events: auto; cursor: pointer; font-family: inherit;
+    background: #e8b04b; color: #1a1410; border: none;
+    border-radius: 999px; padding: 0.9rem 2.6rem; font-size: 1rem; font-weight: 700; letter-spacing: 0.2em;
+    transition: transform 0.15s cubic-bezier(0.16,1,0.3,1), box-shadow 0.15s ease-out;
+  }
+  .btn:hover { transform: scale(1.05); box-shadow: 0 12px 32px rgba(232,176,75,0.35); }
+  .toast {
+    position: fixed; bottom: 6vh; left: 0; right: 0; text-align: center;
+    color: #e8b04b; font-weight: 700; letter-spacing: 0.3em; z-index: 10;
+    opacity: 0; transition: opacity 0.4s ease; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="hud">
+  <div class="level" id="level">LEVEL 1</div>
+  <div class="timer" id="timer">0.0</div>
+  <div class="best" id="best"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<div class="overlay" id="titleOverlay">
+  <h1>TILT MAZE</h1>
+  <p>ポインタの位置で盤を傾けて、玉をゴールまで転がす。<br>黒い穴に落ちるとそのレベルの最初から。全 3 面のタイムアタック。</p>
+  <button class="btn" id="startBtn">START</button>
+</div>
+
+<div class="overlay hidden" id="clearOverlay">
+  <p>ALL LEVELS CLEAR — TOTAL TIME</p>
+  <div class="result" id="result">0.0</div>
+  <p id="newBest" style="color:#e8b04b"></p>
+  <button class="btn" id="retryBtn">AGAIN</button>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1410);
+
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 14.5, 7.5);
+camera.lookAt(0, 0, -0.5);
+
+scene.add(new THREE.AmbientLight(0xfff2e0, 0.55));
+const key = new THREE.DirectionalLight(0xfff2d8, 1.6);
+key.position.set(5, 12, 6);
+key.castShadow = true;
+key.shadow.mapSize.set(1024, 1024);
+key.shadow.camera.left = -8; key.shadow.camera.right = 8;
+key.shadow.camera.top = 8; key.shadow.camera.bottom = -8;
+scene.add(key);
+
+/* ---------- 効果音 ---------- */
+let actx = null;
+function tick(freq = 480, vol = 0.08) {
+  if (!actx) return;
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'sine'; o.frequency.value = freq;
+  g.gain.setValueAtTime(vol, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.07);
+  o.connect(g).connect(actx.destination);
+  o.start(); o.stop(actx.currentTime + 0.08);
+}
+function fanfare() {
+  if (!actx) return;
+  [523, 659, 784, 1047].forEach((f, i) => {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = 'triangle'; o.frequency.value = f;
+    const t0 = actx.currentTime + i * 0.1;
+    g.gain.setValueAtTime(0.14, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.4);
+    o.connect(g).connect(actx.destination);
+    o.start(t0); o.stop(t0 + 0.45);
+  });
+}
+function fallSfx() {
+  if (!actx) return;
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(500, actx.currentTime);
+  o.frequency.exponentialRampToValueAtTime(80, actx.currentTime + 0.4);
+  g.gain.setValueAtTime(0.16, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.45);
+  o.connect(g).connect(actx.destination);
+  o.start(); o.stop(actx.currentTime + 0.5);
+}
+
+/* ---------- 迷路データ（11x11） ---------- */
+const LEVELS = [
+[
+'###########',
+'#S...#....#',
+'#.##.#.##.#',
+'#.#..O..#.#',
+'#.#.###.#.#',
+'#...#G#...#',
+'#.###.##.##',
+'#.#.....O.#',
+'#.#.#####.#',
+'#...#.....#',
+'###########',
+],
+[
+'###########',
+'#....#...G#',
+'#.##.#.####',
+'#.#O.....O#',
+'#.#.#####.#',
+'#.#.#S..#.#',
+'#.#.#.#.#.#',
+'#...#.#.#.#',
+'###.#.#.#.#',
+'#O....#...#',
+'###########',
+],
+[
+'###########',
+'#S.#....O.#',
+'##.#.####.#',
+'#..#.#..#.#',
+'#.##.#.##.#',
+'#.O..#.#O.#',
+'#.####.#.##',
+'#.#..O.#..#',
+'#.#.#####.#',
+'#.......#G#',
+'###########',
+],
+];
+const N = 11, CELL = 1.0;
+const cellX = (j) => (j - N / 2 + 0.5) * CELL;
+const cellZ = (i) => (i - N / 2 + 0.5) * CELL;
+
+/* ---------- 盤 ---------- */
+const board = new THREE.Group();
+scene.add(board);
+
+const woodMat = new THREE.MeshStandardMaterial({ color: 0x8a6238, roughness: 0.8 });
+const wallMat = new THREE.MeshStandardMaterial({ color: 0x5e4023, roughness: 0.75 });
+const goalMat = new THREE.MeshStandardMaterial({ color: 0x4ade80, emissive: 0x22c55e, emissiveIntensity: 0.9 });
+const holeMat = new THREE.MeshBasicMaterial({ color: 0x0a0806 });
+
+let walls = [];       // bool grid
+let holes = [];       // {i, j}
+let goal = { i: 0, j: 0 };
+let start = { i: 0, j: 0 };
+let levelObjects = [];
+
+function buildLevel(idx) {
+  for (const o of levelObjects) board.remove(o);
+  levelObjects = [];
+  walls = Array.from({ length: N }, () => Array(N).fill(false));
+  holes = [];
+
+  const map = LEVELS[idx];
+  // 床
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(N * CELL, 0.5, N * CELL), woodMat);
+  floor.position.y = -0.25;
+  floor.receiveShadow = true;
+  board.add(floor);
+  levelObjects.push(floor);
+
+  for (let i = 0; i < N; i++) {
+    for (let j = 0; j < N; j++) {
+      const ch = map[i][j];
+      if (ch === '#') {
+        walls[i][j] = true;
+        const wall = new THREE.Mesh(new THREE.BoxGeometry(CELL, 0.7, CELL), wallMat);
+        wall.position.set(cellX(j), 0.35, cellZ(i));
+        wall.castShadow = true;
+        wall.receiveShadow = true;
+        board.add(wall);
+        levelObjects.push(wall);
+      } else if (ch === 'O') {
+        holes.push({ i, j });
+        const hole = new THREE.Mesh(new THREE.CircleGeometry(0.34, 24), holeMat);
+        hole.rotation.x = -Math.PI / 2;
+        hole.position.set(cellX(j), 0.015, cellZ(i));
+        board.add(hole);
+        levelObjects.push(hole);
+      } else if (ch === 'G') {
+        goal = { i, j };
+        const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.06, 24), goalMat);
+        pad.position.set(cellX(j), 0.03, cellZ(i));
+        board.add(pad);
+        levelObjects.push(pad);
+      } else if (ch === 'S') {
+        start = { i, j };
+      }
+    }
+  }
+}
+
+/* ---------- 玉 ---------- */
+const BALL_R = 0.3;
+const ball = new THREE.Mesh(
+  new THREE.SphereGeometry(BALL_R, 24, 18),
+  new THREE.MeshStandardMaterial({ color: 0xd8d8e0, metalness: 0.85, roughness: 0.25 })
+);
+ball.castShadow = true;
+board.add(ball);
+let bx = 0, bz = 0, vx = 0, vz = 0;
+
+function placeBallAtStart() {
+  bx = cellX(start.j); bz = cellZ(start.i);
+  vx = vz = 0;
+}
+
+/* ---------- ゲーム状態 ---------- */
+let playing = false;
+let levelIdx = 0;
+let time = 0;
+let falling = null;   // { t } 落下アニメ中
+
+const levelEl = document.getElementById('level');
+const timerEl = document.getElementById('timer');
+const bestEl = document.getElementById('best');
+const toastEl = document.getElementById('toast');
+const BEST_KEY = 'tilt-maze-best';
+let best = +(localStorage.getItem(BEST_KEY) || 0);
+bestEl.textContent = best ? `BEST ${best.toFixed(1)}s` : '';
+
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  setTimeout(() => toastEl.classList.remove('show'), 1400);
+}
+
+function startLevel(idx) {
+  levelIdx = idx;
+  buildLevel(idx);
+  placeBallAtStart();
+  levelEl.textContent = `LEVEL ${idx + 1}`;
+}
+
+function startGame() {
+  time = 0;
+  startLevel(0);
+  playing = true;
+}
+
+function allClear() {
+  playing = false;
+  fanfare();
+  const total = +time.toFixed(1);
+  document.getElementById('result').textContent = total.toFixed(1) + 's';
+  const nb = document.getElementById('newBest');
+  if (!best || total < best) {
+    best = total;
+    localStorage.setItem(BEST_KEY, best);
+    nb.textContent = '✦ NEW RECORD ✦';
+  } else nb.textContent = '';
+  bestEl.textContent = `BEST ${best.toFixed(1)}s`;
+  setTimeout(() => document.getElementById('clearOverlay').classList.remove('hidden'), 700);
+}
+
+/* ---------- 入力（傾き） ---------- */
+let tiltTX = 0, tiltTZ = 0;
+addEventListener('pointermove', (e) => {
+  const nx = (e.clientX / innerWidth) * 2 - 1;
+  const ny = (e.clientY / innerHeight) * 2 - 1;
+  tiltTZ = -nx * 0.24;   // 左右 → z 軸回転
+  tiltTX = ny * 0.24;    // 前後 → x 軸回転
+});
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+  document.getElementById('titleOverlay').classList.add('hidden');
+  startGame();
+});
+document.getElementById('retryBtn').addEventListener('click', () => {
+  document.getElementById('clearOverlay').classList.add('hidden');
+  startGame();
+});
+
+/* ---------- 物理 ---------- */
+function cellAt(x, z) {
+  const j = Math.floor(x / CELL + N / 2);
+  const i = Math.floor(z / CELL + N / 2);
+  if (i < 0 || i >= N || j < 0 || j >= N) return true;  // 盤外は壁扱い
+  return walls[i][j];
+}
+function collides(x, z) {
+  // 玉の四方をチェック
+  return cellAt(x + BALL_R, z) || cellAt(x - BALL_R, z) ||
+         cellAt(x, z + BALL_R) || cellAt(x, z - BALL_R) ||
+         cellAt(x + BALL_R * 0.71, z + BALL_R * 0.71) ||
+         cellAt(x - BALL_R * 0.71, z + BALL_R * 0.71) ||
+         cellAt(x + BALL_R * 0.71, z - BALL_R * 0.71) ||
+         cellAt(x - BALL_R * 0.71, z - BALL_R * 0.71);
+}
+
+/* ---------- メインループ ---------- */
+const clock = new THREE.Clock();
+let ready = false;
+let lastTickAt = 0;
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.04);
+  const t = clock.elapsedTime;
+
+  // 盤の傾きはポインタへ機敏に追従
+  board.rotation.x += (tiltTX - board.rotation.x) * 0.14;
+  board.rotation.z += (tiltTZ - board.rotation.z) * 0.14;
+
+  if (playing && !falling) {
+    time += dt;
+    timerEl.textContent = time.toFixed(1);
+
+    // 傾きに応じた加速（板の傾き → 重力の水平成分）
+    const G = 22;
+    vx += Math.sin(board.rotation.z) * -G * dt;
+    vz += Math.sin(board.rotation.x) * G * dt;
+    vx *= 0.995; vz *= 0.995;   // 転がり抵抗
+
+    // 軸ごとに衝突解決
+    let nx = bx + vx * dt;
+    if (collides(nx, bz)) { vx *= -0.35; nx = bx; if (Math.abs(vx) > 1.2) tick(300, 0.06); }
+    let nz = bz + vz * dt;
+    if (collides(nx, nz)) { vz *= -0.35; nz = bz; if (Math.abs(vz) > 1.2) tick(300, 0.06); }
+    bx = nx; bz = nz;
+
+    // 穴
+    for (const h of holes) {
+      if (Math.hypot(bx - cellX(h.j), bz - cellZ(h.i)) < 0.3) {
+        falling = { t: 0, hx: cellX(h.j), hz: cellZ(h.i) };
+        fallSfx();
+        toast('穴に落ちた…');
+        break;
+      }
+    }
+    // ゴール
+    if (!falling && Math.hypot(bx - cellX(goal.j), bz - cellZ(goal.i)) < 0.3) {
+      tick(880, 0.12);
+      if (levelIdx < LEVELS.length - 1) {
+        toast(`LEVEL ${levelIdx + 1} CLEAR`);
+        fanfare();
+        startLevel(levelIdx + 1);
+      } else {
+        allClear();
+      }
+    }
+  }
+
+  // 落下アニメ → 再スタート
+  if (falling) {
+    falling.t += dt;
+    const k = falling.t / 0.5;
+    bx += (falling.hx - bx) * 0.3;
+    bz += (falling.hz - bz) * 0.3;
+    ball.position.y = BALL_R - k * 1.4;
+    ball.scale.setScalar(Math.max(0.2, 1 - k * 0.5));
+    if (k >= 1) {
+      falling = null;
+      ball.scale.setScalar(1);
+      placeBallAtStart();
+    }
+  } else {
+    ball.position.y = BALL_R;
+  }
+  ball.position.x = bx;
+  ball.position.z = bz;
+  // 転がり回転（見た目）
+  ball.rotation.z -= vx * dt / BALL_R;
+  ball.rotation.x += vz * dt / BALL_R;
+
+  renderer.render(scene, camera);
+  if (!ready) { console.log('[site] ready'); ready = true; }
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

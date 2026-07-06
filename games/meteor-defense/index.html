@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Meteor Defense</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>☄️</text></svg>">
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
+</script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'SF Mono', 'Menlo', monospace; }
+  body { background: #05060f; touch-action: none; cursor: crosshair; }
+  canvas { display: block; }
+  .hud {
+    position: fixed; top: 2.5vh; left: 0; right: 0; text-align: center;
+    color: #9fd8ff; pointer-events: none; z-index: 10; text-transform: uppercase;
+  }
+  .score { font-size: clamp(2rem, 6vw, 3.2rem); font-weight: 700; letter-spacing: 0.1em; text-shadow: 0 0 16px rgba(90, 180, 255, 0.6); }
+  .wave { font-size: 0.8rem; letter-spacing: 0.35em; opacity: 0.7; }
+  .overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1.1rem;
+    color: #cfe8ff; z-index: 20; background: rgba(4, 6, 16, 0.66);
+    backdrop-filter: blur(6px); transition: opacity 0.3s ease; text-align: center;
+  }
+  .overlay.hidden { opacity: 0; pointer-events: none; }
+  .overlay h1 { font-size: clamp(1.8rem, 6.5vw, 3rem); letter-spacing: 0.25em; text-shadow: 0 0 24px rgba(90,180,255,0.8); }
+  .overlay p { opacity: 0.85; font-size: 0.85rem; letter-spacing: 0.12em; line-height: 2; padding: 0 1.5rem; }
+  .overlay .result { font-size: clamp(3rem, 11vw, 5rem); font-weight: 700; line-height: 1; color: #ffb35a; }
+  .btn {
+    pointer-events: auto; cursor: pointer; font-family: inherit;
+    background: transparent; color: #9fd8ff; border: 1px solid #9fd8ff;
+    border-radius: 4px; padding: 0.85rem 2.6rem; font-size: 0.95rem; letter-spacing: 0.3em;
+    text-transform: uppercase;
+    transition: transform 0.15s cubic-bezier(0.16,1,0.3,1), background 0.15s ease-out, color 0.15s ease-out;
+  }
+  .btn:hover { transform: scale(1.05); background: #9fd8ff; color: #05060f; }
+</style>
+</head>
+<body>
+<div class="hud">
+  <div class="score" id="score">0</div>
+  <div class="wave" id="wave"></div>
+</div>
+
+<div class="overlay" id="titleOverlay">
+  <h1>METEOR DEFENSE</h1>
+  <p>クリック地点に迎撃ミサイルを撃ち、爆風で流星を撃ち落とせ。<br>街がすべて燃え尽きたら終わり。波は次第に激しくなる。</p>
+  <button class="btn" id="startBtn">Engage</button>
+</div>
+
+<div class="overlay hidden" id="overOverlay">
+  <p>THE CITY HAS FALLEN — SCORE</p>
+  <div class="result" id="result">0</div>
+  <p id="newBest" style="color:#ffd24a"></p>
+  <button class="btn" id="retryBtn">Rebuild</button>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x05060f);
+scene.fog = new THREE.Fog(0x05060f, 40, 90);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 200);
+camera.position.set(0, 6, 26);
+camera.lookAt(0, 7, 0);
+
+scene.add(new THREE.AmbientLight(0x304060, 1.4));
+const moon = new THREE.DirectionalLight(0x8899cc, 0.6);
+moon.position.set(-10, 20, 5);
+scene.add(moon);
+
+/* ---------- 効果音 ---------- */
+let actx = null;
+function boom(vol = 0.25) {
+  if (!actx) return;
+  const len = actx.sampleRate * 0.5;
+  const buf = actx.createBuffer(1, len, actx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2);
+  const src = actx.createBufferSource();
+  src.buffer = buf;
+  const lp = actx.createBiquadFilter();
+  lp.type = 'lowpass'; lp.frequency.value = 700;
+  const g = actx.createGain(); g.gain.value = vol;
+  src.connect(lp).connect(g).connect(actx.destination);
+  src.start();
+}
+function launchSfx() {
+  if (!actx) return;
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'sawtooth';
+  o.frequency.setValueAtTime(200, actx.currentTime);
+  o.frequency.exponentialRampToValueAtTime(900, actx.currentTime + 0.25);
+  g.gain.setValueAtTime(0.06, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.3);
+  o.connect(g).connect(actx.destination);
+  o.start(); o.stop(actx.currentTime + 0.32);
+}
+
+/* ---------- グロー ---------- */
+function glowTexture(inner, outer) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(64, 64, 2, 64, 64, 64);
+  grad.addColorStop(0, inner);
+  grad.addColorStop(0.4, outer);
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const fireGlow = glowTexture('rgba(255,230,180,1)', 'rgba(255,120,40,0.5)');
+const blueGlow = glowTexture('rgba(220,240,255,1)', 'rgba(90,180,255,0.5)');
+
+/* ---------- 街 ---------- */
+const buildings = [];  // { mesh, alive, x, h }
+{
+  const winTex = (() => {
+    const c = document.createElement('canvas');
+    c.width = 64; c.height = 128;
+    const g = c.getContext('2d');
+    g.fillStyle = '#0d1220';
+    g.fillRect(0, 0, 64, 128);
+    for (let y = 6; y < 122; y += 10) {
+      for (let x = 6; x < 58; x += 10) {
+        g.fillStyle = Math.random() < 0.55 ? '#ffd98a' : '#1a2233';
+        g.fillRect(x, y, 5, 6);
+      }
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  });
+  const xs = [-16, -10.5, -5, 0, 5, 10.5, 16];
+  for (const x of xs) {
+    const h = 3.5 + Math.random() * 4;
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(3, h, 3),
+      (() => {
+        const tex = winTex();
+        return new THREE.MeshStandardMaterial({
+          map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.85,
+          color: 0x3a4a6e, roughness: 0.85,
+        });
+      })()
+    );
+    mesh.position.set(x, h / 2, 0);
+    scene.add(mesh);
+    buildings.push({ mesh, alive: true, x, h });
+  }
+  // 地面
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(80, 30),
+    new THREE.MeshStandardMaterial({ color: 0x0a0e1c, roughness: 1 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  scene.add(ground);
+}
+
+/* ---------- 星 ---------- */
+{
+  const n = 300, pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    pos[i*3] = (Math.random() - 0.5) * 120;
+    pos[i*3+1] = 5 + Math.random() * 50;
+    pos[i*3+2] = -20 - Math.random() * 40;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({
+    size: 0.14, color: 0xcdd8ff, transparent: true, opacity: 0.75, fog: false,
+  })));
+}
+
+/* ---------- ゲームオブジェクト ---------- */
+const meteors = [];      // { group, vel }
+const interceptors = []; // { sprite, pos, target, vel }
+const explosions = [];   // { sprite, pos, age, life, maxR }
+const meteorGeo = new THREE.DodecahedronGeometry(0.42, 0);
+const meteorMat = new THREE.MeshStandardMaterial({
+  color: 0x8a5a3a, emissive: 0xff5a20, emissiveIntensity: 0.9, roughness: 0.7,
+});
+
+function spawnMeteor(speedScale) {
+  const g = new THREE.Group();
+  const rock = new THREE.Mesh(meteorGeo, meteorMat);
+  g.add(rock);
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: fireGlow, transparent: true, opacity: 0.85,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  }));
+  glow.scale.setScalar(2.2);
+  g.add(glow);
+  const startX = (Math.random() - 0.5) * 44;
+  g.position.set(startX, 26 + Math.random() * 6, (Math.random() - 0.5) * 2);
+  // 生きている建物を狙う
+  const alive = buildings.filter(b => b.alive);
+  const target = alive.length
+    ? new THREE.Vector3(alive[Math.random() * alive.length | 0].x + (Math.random() - 0.5) * 2, 0, 0)
+    : new THREE.Vector3((Math.random() - 0.5) * 30, 0, 0);
+  const vel = target.clone().sub(g.position).normalize().multiplyScalar((2.2 + Math.random() * 1.4) * speedScale);
+  scene.add(g);
+  meteors.push({ group: g, vel, rock });
+}
+
+function explode(pos, maxR = 3.2, blue = true) {
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: blue ? blueGlow : fireGlow, transparent: true, opacity: 0.95,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  }));
+  sprite.position.copy(pos);
+  sprite.scale.setScalar(0.5);
+  scene.add(sprite);
+  explosions.push({ sprite, pos: pos.clone(), age: 0, life: 0.9, maxR });
+  boom(blue ? 0.18 : 0.3);
+}
+
+/* ---------- ゲーム状態 ---------- */
+let playing = false;
+let score = 0, wave = 1, waveT = 0, spawnT = 0;
+
+const scoreEl = document.getElementById('score');
+const waveEl = document.getElementById('wave');
+const BEST_KEY = 'meteor-defense-best';
+let best = +(localStorage.getItem(BEST_KEY) || 0);
+
+function reset() {
+  for (const m of meteors) scene.remove(m.group);
+  meteors.length = 0;
+  for (const i of interceptors) scene.remove(i.sprite);
+  interceptors.length = 0;
+  for (const e of explosions) scene.remove(e.sprite);
+  explosions.length = 0;
+  for (const b of buildings) {
+    b.alive = true;
+    b.mesh.visible = true;
+    b.mesh.material.emissiveIntensity = 0.12;
+  }
+  score = 0; wave = 1; waveT = 0; spawnT = 1;
+  scoreEl.textContent = '0';
+  waveEl.textContent = 'WAVE 1';
+}
+
+function cityCount() { return buildings.filter(b => b.alive).length; }
+
+function gameOver() {
+  playing = false;
+  document.getElementById('result').textContent = score;
+  const nb = document.getElementById('newBest');
+  if (score > best) {
+    best = score;
+    localStorage.setItem(BEST_KEY, best);
+    nb.textContent = '★ NEW RECORD ★';
+  } else nb.textContent = '';
+  setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 800);
+}
+
+/* ---------- 入力: クリック地点へ迎撃弾 ---------- */
+const raycaster = new THREE.Raycaster();
+const firePlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+const ndc = new THREE.Vector2();
+const aim = new THREE.Vector3();
+const LAUNCH_POS = new THREE.Vector3(0, 1.2, 0);
+
+addEventListener('pointerdown', (e) => {
+  if (e.target && e.target.closest && e.target.closest('button')) return;
+  if (!playing) return;
+  ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  if (!raycaster.ray.intersectPlane(firePlane, aim)) return;
+  aim.y = Math.max(2, aim.y);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: blueGlow, transparent: true, opacity: 0.95,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  }));
+  sprite.scale.setScalar(0.7);
+  sprite.position.copy(LAUNCH_POS);
+  scene.add(sprite);
+  interceptors.push({
+    sprite,
+    target: aim.clone(),
+    vel: aim.clone().sub(LAUNCH_POS).normalize().multiplyScalar(30),
+  });
+  launchSfx();
+});
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+  document.getElementById('titleOverlay').classList.add('hidden');
+  reset();
+  playing = true;
+});
+document.getElementById('retryBtn').addEventListener('click', () => {
+  document.getElementById('overOverlay').classList.add('hidden');
+  reset();
+  playing = true;
+});
+
+/* ---------- メインループ ---------- */
+const clock = new THREE.Clock();
+let ready = false;
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+
+  if (playing) {
+    // ウェーブ進行
+    waveT += dt;
+    if (waveT > 22) { waveT = 0; wave++; waveEl.textContent = `WAVE ${wave}`; }
+    const speedScale = 1 + (wave - 1) * 0.22;
+    const interval = Math.max(0.55, 1.7 - wave * 0.14);
+    spawnT -= dt;
+    if (spawnT <= 0) { spawnT = interval * (0.7 + Math.random() * 0.6); spawnMeteor(speedScale); }
+
+    // 流星
+    for (let i = meteors.length - 1; i >= 0; i--) {
+      const m = meteors[i];
+      m.group.position.addScaledVector(m.vel, dt);
+      m.rock.rotation.x += dt * 3; m.rock.rotation.y += dt * 2;
+      if (m.group.position.y <= 0.4) {
+        // 着弾 — 最寄りの建物を破壊
+        explode(m.group.position, 3.6, false);
+        let nearest = null, nd = 3.4;
+        for (const b of buildings) {
+          if (!b.alive) continue;
+          const d = Math.abs(b.x - m.group.position.x);
+          if (d < nd) { nd = d; nearest = b; }
+        }
+        if (nearest) {
+          nearest.alive = false;
+          nearest.mesh.visible = false;
+        }
+        scene.remove(m.group);
+        meteors.splice(i, 1);
+        if (cityCount() === 0) gameOver();
+      }
+    }
+
+    // 迎撃弾
+    for (let i = interceptors.length - 1; i >= 0; i--) {
+      const it = interceptors[i];
+      it.sprite.position.addScaledVector(it.vel, dt);
+      if (it.sprite.position.distanceTo(it.target) < 0.9) {
+        explode(it.target, 3.2, true);
+        scene.remove(it.sprite);
+        interceptors.splice(i, 1);
+      }
+    }
+
+    // 爆風と流星の当たり
+    for (const e of explosions) {
+      const r = (e.age / e.life) * e.maxR;
+      for (let i = meteors.length - 1; i >= 0; i--) {
+        if (meteors[i].group.position.distanceTo(e.pos) < r) {
+          explode(meteors[i].group.position, 2.2, false);
+          scene.remove(meteors[i].group);
+          meteors.splice(i, 1);
+          score += 10 * wave;
+          scoreEl.textContent = score;
+        }
+      }
+    }
+  }
+
+  // 爆風の見た目更新（ゲームオーバー後も減衰させる）
+  for (let i = explosions.length - 1; i >= 0; i--) {
+    const e = explosions[i];
+    e.age += dt;
+    const k = e.age / e.life;
+    e.sprite.scale.setScalar(0.5 + k * e.maxR * 2.4);
+    e.sprite.material.opacity = 0.95 * (1 - k);
+    if (k >= 1) {
+      scene.remove(e.sprite);
+      explosions.splice(i, 1);
+    }
+  }
+
+  renderer.render(scene, camera);
+  if (!ready) { console.log('[site] ready'); ready = true; }
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

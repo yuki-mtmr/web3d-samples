@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Stack Tower</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏗️</text></svg>">
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
+</script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Avenir Next', 'Hiragino Sans', sans-serif; }
+  body { background: #12141f; touch-action: none; }
+  canvas { display: block; }
+  .hud {
+    position: fixed; top: 4vh; left: 0; right: 0;
+    text-align: center; pointer-events: none; color: #fff; z-index: 10;
+  }
+  .score { font-size: clamp(3rem, 9vw, 5rem); font-weight: 800; letter-spacing: -0.02em; text-shadow: 0 4px 24px rgba(0,0,0,0.4); }
+  .best { font-size: 0.85rem; letter-spacing: 0.2em; opacity: 0.65; }
+  .overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1rem;
+    color: #fff; z-index: 20; background: rgba(10, 12, 22, 0.55);
+    backdrop-filter: blur(6px); transition: opacity 0.3s ease;
+  }
+  .overlay.hidden { opacity: 0; pointer-events: none; }
+  .overlay h1 { font-size: clamp(2.2rem, 8vw, 3.6rem); font-weight: 800; letter-spacing: 0.06em; }
+  .overlay p { opacity: 0.8; font-size: 0.95rem; letter-spacing: 0.08em; }
+  .overlay .result { font-size: clamp(3rem, 12vw, 5.5rem); font-weight: 800; line-height: 1; }
+  .btn {
+    pointer-events: auto; cursor: pointer; font-family: inherit;
+    background: #fff; color: #12141f; border: none; border-radius: 999px;
+    padding: 0.9rem 2.6rem; font-size: 1rem; font-weight: 700; letter-spacing: 0.15em;
+    transition: transform 0.15s cubic-bezier(0.16,1,0.3,1), box-shadow 0.15s ease-out;
+  }
+  .btn:hover { transform: scale(1.05); box-shadow: 0 12px 32px rgba(255,255,255,0.25); }
+</style>
+</head>
+<body>
+<div class="hud">
+  <div class="score" id="score">0</div>
+  <div class="best" id="best"></div>
+</div>
+
+<div class="overlay" id="titleOverlay">
+  <h1>STACK TOWER</h1>
+  <p>タップ / クリック / スペースでブロックを積む。はみ出た分は切り落とされる。</p>
+  <button class="btn" id="startBtn">START</button>
+</div>
+
+<div class="overlay hidden" id="overOverlay">
+  <p>TOWER HEIGHT</p>
+  <div class="result" id="result">0</div>
+  <p id="newBest" style="color:#ffd24a"></p>
+  <button class="btn" id="retryBtn">RETRY</button>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x12141f);
+scene.fog = new THREE.Fog(0x12141f, 30, 70);
+
+// 等角気味の見下ろしカメラ
+const camera = new THREE.OrthographicCamera();
+function setCamera(h) {
+  const aspect = innerWidth / innerHeight;
+  const view = 11;
+  camera.left = -view * aspect / 2;
+  camera.right = view * aspect / 2;
+  camera.top = view / 2;
+  camera.bottom = -view / 2;
+  camera.near = 0.1; camera.far = 100;
+  camera.position.set(12, 12 + h, 12);
+  camera.lookAt(0, h, 0);
+  camera.updateProjectionMatrix();
+}
+setCamera(0);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+sun.position.set(6, 14, 4);
+scene.add(sun);
+
+/* ---------- 効果音（WebAudio 合成） ---------- */
+let actx = null;
+function beep(freq, dur = 0.08, type = 'sine', vol = 0.18) {
+  if (!actx) return;
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(vol, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + dur);
+  o.connect(g).connect(actx.destination);
+  o.start(); o.stop(actx.currentTime + dur);
+}
+
+/* ---------- ゲーム状態 ---------- */
+const BLOCK_H = 0.6;
+const BASE_SIZE = 4.2;
+let stack = [];        // { mesh, w, d }  最後尾が最上段
+let debris = [];       // 切り落とし片 { mesh, vy, vr }
+let moving = null;     // 動いているブロック
+let dir = 1, axis = 'x', speed = 4.2;
+let level = 0;
+let playing = false;
+let camY = 0;
+let hue0 = Math.random() * 360;
+
+const scoreEl = document.getElementById('score');
+const bestEl = document.getElementById('best');
+const BEST_KEY = 'stack-tower-best';
+let best = +(localStorage.getItem(BEST_KEY) || 0);
+bestEl.textContent = best ? `BEST ${best}` : '';
+
+function blockColor(i) {
+  return new THREE.Color(`hsl(${(hue0 + i * 9) % 360}, 62%, ${52 + Math.sin(i * 0.4) * 8}%)`);
+}
+
+function makeBlock(w, d, x, z, y, i) {
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(w, BLOCK_H, d),
+    new THREE.MeshStandardMaterial({ color: blockColor(i), roughness: 0.65 })
+  );
+  mesh.position.set(x, y, z);
+  scene.add(mesh);
+  return mesh;
+}
+
+function reset() {
+  for (const b of stack) scene.remove(b.mesh);
+  for (const d of debris) scene.remove(d.mesh);
+  if (moving) scene.remove(moving.mesh);
+  stack = []; debris = []; moving = null;
+  level = 0; speed = 4.2; camY = 0;
+  hue0 = Math.random() * 360;
+  const base = makeBlock(BASE_SIZE, BASE_SIZE, 0, 0, 0, 0);
+  stack.push({ mesh: base, w: BASE_SIZE, d: BASE_SIZE });
+  spawnMoving();
+  scoreEl.textContent = '0';
+  setCamera(0);
+}
+
+function spawnMoving() {
+  const top = stack[stack.length - 1];
+  axis = level % 2 === 0 ? 'x' : 'z';
+  const y = stack.length * BLOCK_H;
+  const mesh = makeBlock(top.w, top.d, top.mesh.position.x, top.mesh.position.z, y, stack.length);
+  if (axis === 'x') mesh.position.x = -7;
+  else mesh.position.z = -7;
+  dir = 1;
+  moving = { mesh, w: top.w, d: top.d };
+}
+
+function place() {
+  if (!playing || !moving) return;
+  const top = stack[stack.length - 1];
+  const m = moving.mesh;
+  const delta = axis === 'x'
+    ? m.position.x - top.mesh.position.x
+    : m.position.z - top.mesh.position.z;
+  const size = axis === 'x' ? moving.w : moving.d;
+  const overlap = size - Math.abs(delta);
+
+  if (overlap <= 0.02) {   // 完全に外した → 落下してゲームオーバー
+    debris.push({ mesh: m, vy: 0.02, vr: (Math.random() - 0.5) * 0.1 });
+    gameOver();
+    return;
+  }
+
+  const perfect = Math.abs(delta) < 0.12;
+  let newW = moving.w, newD = moving.d;
+  if (perfect) {
+    // ぴったり → そのまま置けて心地よい音
+    if (axis === 'x') m.position.x = top.mesh.position.x;
+    else m.position.z = top.mesh.position.z;
+    beep(660 + level * 14, 0.1, 'triangle', 0.22);
+  } else {
+    // はみ出しを切り落とす
+    if (axis === 'x') newW = overlap; else newD = overlap;
+    const keepCenter = axis === 'x'
+      ? top.mesh.position.x + delta / 2
+      : top.mesh.position.z + delta / 2;
+
+    // 残る部分
+    m.geometry.dispose();
+    m.geometry = new THREE.BoxGeometry(newW, BLOCK_H, newD);
+    if (axis === 'x') m.position.x = keepCenter;
+    else m.position.z = keepCenter;
+
+    // 落ちる部分
+    const cutSize = size - overlap;
+    const cutGeo = axis === 'x'
+      ? new THREE.BoxGeometry(cutSize, BLOCK_H, moving.d)
+      : new THREE.BoxGeometry(moving.w, BLOCK_H, cutSize);
+    const cut = new THREE.Mesh(cutGeo, m.material.clone());
+    const sign = Math.sign(delta);
+    if (axis === 'x') cut.position.set(keepCenter + sign * (overlap / 2 + cutSize / 2), m.position.y, m.position.z);
+    else cut.position.set(m.position.x, m.position.y, keepCenter + sign * (overlap / 2 + cutSize / 2));
+    scene.add(cut);
+    debris.push({ mesh: cut, vy: 0, vr: sign * 0.06 });
+    beep(320, 0.07, 'square', 0.1);
+  }
+
+  stack.push({ mesh: m, w: newW, d: newD });
+  moving = null;
+  level++;
+  speed = Math.min(9, 4.2 + level * 0.16);
+  scoreEl.textContent = level;
+  spawnMoving();
+}
+
+function gameOver() {
+  playing = false;
+  moving = null;
+  beep(140, 0.4, 'sawtooth', 0.2);
+  document.getElementById('result').textContent = level;
+  const nb = document.getElementById('newBest');
+  if (level > best) {
+    best = level;
+    localStorage.setItem(BEST_KEY, best);
+    nb.textContent = '✦ NEW BEST ✦';
+  } else nb.textContent = '';
+  bestEl.textContent = `BEST ${best}`;
+  setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 550);
+}
+
+/* ---------- 入力 ---------- */
+function onAction(e) {
+  if (e.target && e.target.closest && e.target.closest('button')) return;
+  place();
+}
+addEventListener('pointerdown', onAction);
+addEventListener('keydown', (e) => { if (e.code === 'Space') place(); });
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+  document.getElementById('titleOverlay').classList.add('hidden');
+  reset();
+  playing = true;
+});
+document.getElementById('retryBtn').addEventListener('click', () => {
+  document.getElementById('overOverlay').classList.add('hidden');
+  reset();
+  playing = true;
+});
+
+/* ---------- メインループ ---------- */
+const clock = new THREE.Clock();
+let ready = false;
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  if (playing && moving) {
+    const m = moving.mesh;
+    const p = axis === 'x' ? 'x' : 'z';
+    m.position[p] += dir * speed * dt;
+    if (m.position[p] > 7) dir = -1;
+    if (m.position[p] < -7) dir = 1;
+  }
+
+  // 切り落とし片の落下
+  for (let i = debris.length - 1; i >= 0; i--) {
+    const d = debris[i];
+    d.vy += 9.8 * dt;
+    d.mesh.position.y -= d.vy * dt * 3;
+    d.mesh.rotation.x += d.vr;
+    d.mesh.rotation.z += d.vr * 0.7;
+    if (d.mesh.position.y < -22) {
+      scene.remove(d.mesh);
+      debris.splice(i, 1);
+    }
+  }
+
+  // カメラは塔の高さを滑らかに追う
+  const targetY = Math.max(0, (stack.length - 1) * BLOCK_H - BLOCK_H);
+  camY += (targetY - camY) * 0.08;
+  setCamera(camY);
+
+  renderer.render(scene, camera);
+  if (!ready) { console.log('[site] ready'); ready = true; }
+});
+
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  setCamera(camY);
+});
+</script>
+</body>
+</html>
