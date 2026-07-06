@@ -23,9 +23,9 @@
     position: fixed; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 1.1rem;
     color: #f3ead8; z-index: 20; background: rgba(8, 5, 18, 0.6);
-    backdrop-filter: blur(6px); transition: opacity 0.3s ease; text-align: center;
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); transition: opacity 0.3s ease, visibility 0.3s; text-align: center;
   }
-  .overlay.hidden { opacity: 0; pointer-events: none; }
+  .overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
   .overlay h1 { font-size: clamp(2rem, 7vw, 3.2rem); letter-spacing: 0.28em; text-shadow: 0 0 24px rgba(224,67,45,0.7); }
   .overlay p { opacity: 0.85; font-size: 0.9rem; letter-spacing: 0.12em; line-height: 2; padding: 0 1.5rem; }
   .overlay .result { font-size: clamp(3rem, 11vw, 5rem); font-weight: 700; line-height: 1; color: #e8b04b; }
@@ -139,7 +139,17 @@ const gates = [];   // { group, gx, gy, z, passed }
 const gateMat = new THREE.MeshStandardMaterial({
   color: 0xc22a18, emissive: 0x6a1408, emissiveIntensity: 0.7, roughness: 0.6,
 });
+const barMat = new THREE.MeshStandardMaterial({
+  color: 0xffc06a, emissive: 0xff9a4d, emissiveIntensity: 1.8,
+});
 const frameT = 0.5; // 枠の太さ
+
+/* ゲートはプレイ中ずっと再生成されるので、ジオメトリを確実に解放する
+   （マテリアルは共有なので破棄しない） */
+function removeGate(g) {
+  g.group.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+  scene.remove(g.group);
+}
 
 let gateCount = 0;
 function makeGate(z) {
@@ -169,8 +179,7 @@ function makeGate(z) {
   }
   // 窓枠の縁光 — 上下左右の細棒 4 本
   const bar = (w, h, x, y) => {
-    const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.12),
-      new THREE.MeshStandardMaterial({ color: 0xffc06a, emissive: 0xff9a4d, emissiveIntensity: 1.8 }));
+    const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.12), barMat);
     b.position.set(x, y, 0.2);
     g.add(b);
   };
@@ -226,7 +235,7 @@ let best = +(localStorage.getItem(BEST_KEY) || 0);
 bestEl.textContent = best ? `最長 ${best} 間` : '';
 
 function reset() {
-  for (const g of gates) scene.remove(g.group);
+  for (const g of gates) removeGate(g);
   gates.length = 0;
   speed = 10; dist = 0; gateCount = 0;
   px = py = tx = ty = 0;
@@ -319,7 +328,7 @@ renderer.setAnimationLoop(() => {
     // 通り過ぎたゲートを、最奥のさらに先へ湧かせ直す
     for (let i = gates.length - 1; i >= 0; i--) {
       if (gates[i].z > 8) {
-        scene.remove(gates[i].group);
+        removeGate(gates[i]);
         gates.splice(i, 1);
         const minZ = gates.reduce((m, g) => Math.min(m, g.z), 0);
         makeGate(minZ - 11);

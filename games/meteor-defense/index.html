@@ -23,9 +23,9 @@
     position: fixed; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 1.1rem;
     color: #cfe8ff; z-index: 20; background: rgba(4, 6, 16, 0.66);
-    backdrop-filter: blur(6px); transition: opacity 0.3s ease; text-align: center;
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); transition: opacity 0.3s ease, visibility 0.3s; text-align: center;
   }
-  .overlay.hidden { opacity: 0; pointer-events: none; }
+  .overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
   .overlay h1 { font-size: clamp(1.8rem, 6.5vw, 3rem); letter-spacing: 0.25em; text-shadow: 0 0 24px rgba(90,180,255,0.8); }
   .overlay p { opacity: 0.85; font-size: 0.85rem; letter-spacing: 0.12em; line-height: 2; padding: 0 1.5rem; }
   .overlay .result { font-size: clamp(3rem, 11vw, 5rem); font-weight: 700; line-height: 1; color: #ffb35a; }
@@ -248,7 +248,7 @@ function reset() {
   for (const b of buildings) {
     b.alive = true;
     b.mesh.visible = true;
-    b.mesh.material.emissiveIntensity = 0.12;
+    b.mesh.material.emissiveIntensity = 0.85;   // 生成時と同じ明るさに戻す
   }
   score = 0; wave = 1; waveT = 0; spawnT = 1;
   scoreEl.textContent = '0';
@@ -357,6 +357,7 @@ renderer.setAnimationLoop(() => {
       if (it.sprite.position.distanceTo(it.target) < 0.9) {
         explode(it.target, 3.2, true);
         scene.remove(it.sprite);
+        it.sprite.material.dispose();
         interceptors.splice(i, 1);
       }
     }
@@ -385,6 +386,7 @@ renderer.setAnimationLoop(() => {
     e.sprite.material.opacity = 0.95 * (1 - k);
     if (k >= 1) {
       scene.remove(e.sprite);
+      e.sprite.material.dispose();
       explosions.splice(i, 1);
     }
   }

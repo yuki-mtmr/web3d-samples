@@ -23,9 +23,9 @@
     position: fixed; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 1rem;
     color: #fff; z-index: 20; background: rgba(10, 12, 22, 0.55);
-    backdrop-filter: blur(6px); transition: opacity 0.3s ease;
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); transition: opacity 0.3s ease, visibility 0.3s;
   }
-  .overlay.hidden { opacity: 0; pointer-events: none; }
+  .overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
   .overlay h1 { font-size: clamp(2.2rem, 8vw, 3.6rem); font-weight: 800; letter-spacing: 0.06em; }
   .overlay p { opacity: 0.8; font-size: 0.95rem; letter-spacing: 0.08em; }
   .overlay .result { font-size: clamp(3rem, 12vw, 5.5rem); font-weight: 800; line-height: 1; }
@@ -134,10 +134,17 @@ function makeBlock(w, d, x, z, y, i) {
   return mesh;
 }
 
+// ブロックはリトライごとに全て作り直すので、確実に GPU リソースを解放する
+function disposeMesh(mesh) {
+  scene.remove(mesh);
+  mesh.geometry.dispose();
+  mesh.material.dispose();
+}
+
 function reset() {
-  for (const b of stack) scene.remove(b.mesh);
-  for (const d of debris) scene.remove(d.mesh);
-  if (moving) scene.remove(moving.mesh);
+  for (const b of stack) disposeMesh(b.mesh);
+  for (const d of debris) disposeMesh(d.mesh);
+  if (moving) disposeMesh(moving.mesh);
   stack = []; debris = []; moving = null;
   level = 0; speed = 4.2; camY = 0;
   hue0 = Math.random() * 360;
@@ -274,7 +281,7 @@ renderer.setAnimationLoop(() => {
     d.mesh.rotation.x += d.vr;
     d.mesh.rotation.z += d.vr * 0.7;
     if (d.mesh.position.y < -22) {
-      scene.remove(d.mesh);
+      disposeMesh(d.mesh);
       debris.splice(i, 1);
     }
   }

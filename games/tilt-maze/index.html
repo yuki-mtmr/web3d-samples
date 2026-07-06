@@ -24,9 +24,9 @@
     position: fixed; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 1.1rem;
     color: #f0e8d8; z-index: 20; background: rgba(16, 12, 8, 0.66);
-    backdrop-filter: blur(6px); transition: opacity 0.3s ease; text-align: center;
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); transition: opacity 0.3s ease, visibility 0.3s; text-align: center;
   }
-  .overlay.hidden { opacity: 0; pointer-events: none; }
+  .overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
   .overlay h1 { font-size: clamp(2rem, 7vw, 3.2rem); font-weight: 800; letter-spacing: 0.12em; }
   .overlay p { opacity: 0.85; font-size: 0.9rem; letter-spacing: 0.1em; line-height: 2; padding: 0 1.5rem; }
   .overlay .result { font-size: clamp(2.6rem, 10vw, 4.5rem); font-weight: 800; line-height: 1; color: #e8b04b; font-variant-numeric: tabular-nums; }
@@ -159,10 +159,10 @@ const LEVELS = [
 '###########',
 '#S.#....O.#',
 '##.#.####.#',
-'#..#.#..#.#',
+'#.......#.#',
 '#.##.#.##.#',
 '#.O..#.#O.#',
-'#.####.#.##',
+'#.####...##',
 '#.#..O.#..#',
 '#.#.#####.#',
 '#.......#G#',
@@ -189,7 +189,10 @@ let start = { i: 0, j: 0 };
 let levelObjects = [];
 
 function buildLevel(idx) {
-  for (const o of levelObjects) board.remove(o);
+  for (const o of levelObjects) {
+    board.remove(o);
+    o.geometry.dispose();   // レベル再構築のたびに古いジオメトリを解放
+  }
   levelObjects = [];
   walls = Array.from({ length: N }, () => Array(N).fill(false));
   holes = [];
@@ -353,14 +356,20 @@ renderer.setAnimationLoop(() => {
     const G = 22;
     vx += Math.sin(board.rotation.z) * -G * dt;
     vz += Math.sin(board.rotation.x) * G * dt;
-    vx *= 0.995; vz *= 0.995;   // 転がり抵抗
+    // 転がり抵抗はフレームレート非依存に（60fps 基準の指数減衰）
+    const damp = Math.pow(0.995, dt * 60);
+    vx *= damp; vz *= damp;
 
-    // 軸ごとに衝突解決
-    let nx = bx + vx * dt;
-    if (collides(nx, bz)) { vx *= -0.35; nx = bx; if (Math.abs(vx) > 1.2) tick(300, 0.06); }
-    let nz = bz + vz * dt;
-    if (collides(nx, nz)) { vz *= -0.35; nz = bz; if (Math.abs(vz) > 1.2) tick(300, 0.06); }
-    bx = nx; bz = nz;
+    // 低 fps でも壁を抜けないよう、移動をサブステップに分割して軸別に衝突解決
+    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(vx), Math.abs(vz)) * dt / (CELL * 0.25)));
+    const sdt = dt / steps;
+    for (let s = 0; s < steps; s++) {
+      let nx = bx + vx * sdt;
+      if (collides(nx, bz)) { vx *= -0.35; nx = bx; if (Math.abs(vx) > 1.2) tick(300, 0.06); }
+      let nz = bz + vz * sdt;
+      if (collides(nx, nz)) { vz *= -0.35; nz = bz; if (Math.abs(vz) > 1.2) tick(300, 0.06); }
+      bx = nx; bz = nz;
+    }
 
     // 穴
     for (const h of holes) {
