@@ -6,7 +6,14 @@
 <title>Gravity Flip</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔃</text></svg>">
 <style>
-  :root { --bg: #05070f; --fg: #d8f4ff; --accent: #35d0ff; --danger: #ff3d81; }
+  :root {
+    /* [THEME-TOKEN] brief.json の palette と一致させること(verify THEME 検査対象) */
+    --tk-primary: #35d0ff;
+    --tk-accent: #d8f4ff;
+    --tk-background: #05070f;
+    --tk-danger: #ff3d81;
+    --bg: var(--tk-background); --fg: var(--tk-accent); --accent: var(--tk-primary); --danger: var(--tk-danger);
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--fg);
     font-family: "SF Mono", ui-monospace, monospace; touch-action: none; }

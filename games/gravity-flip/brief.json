@@ -1,0 +1,23 @@
+{
+  "id": "B03",
+  "styleKeyword": "レトロワイヤーフレーム",
+  "palette": {
+    "primary": "#35d0ff",
+    "accent": "#d8f4ff",
+    "background": "#05070f",
+    "danger": "#ff3d81"
+  },
+  "mood": [
+    "ワイヤーフレーム",
+    "高彩度",
+    "発光"
+  ],
+  "lighting": "単一ポイントライト+emissive、ワイヤーフレーム面はライト非依存",
+  "prohibitions": [
+    "テクスチャ画像の使用",
+    "障害物が背景ワイヤーフレームに埋没する配色",
+    "bloom 不在での emissive 多用"
+  ],
+  "assetTier": "T0",
+  "cluster": "C1"
+}

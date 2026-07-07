@@ -1,0 +1,23 @@
+{
+  "id": "B05",
+  "styleKeyword": "溶岩",
+  "palette": {
+    "primary": "#ffb347",
+    "accent": "#35e08a",
+    "background": "#170b08",
+    "danger": "#ff3b30"
+  },
+  "mood": [
+    "溶岩",
+    "熱波陽炎",
+    "発光"
+  ],
+  "lighting": "溶岩面からのボトムライト+暖色 emissive、環境光は最小限",
+  "prohibitions": [
+    "テクスチャ画像の使用",
+    "寒色背景(青系グラデーションの流用禁止)",
+    "bloom 不在での emissive 多用"
+  ],
+  "assetTier": "T1",
+  "cluster": "C1"
+}

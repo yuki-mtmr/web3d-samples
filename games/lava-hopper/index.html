@@ -6,7 +6,14 @@
 <title>LAVA HOPPER</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌋</text></svg>">
 <style>
-  :root { --bg: #170b08; --fg: #ffe9d8; --accent: #ffb347; --danger: #ff3b30; --safe: #35e08a; }
+  :root {
+    /* [THEME-TOKEN] brief.json の palette と一致させること(verify THEME 検査対象) */
+    --tk-primary: #ffb347;
+    --tk-accent: #35e08a;
+    --tk-background: #170b08;
+    --tk-danger: #ff3b30;
+    --bg: var(--tk-background); --fg: #ffe9d8; --accent: var(--tk-primary); --danger: var(--tk-danger); --safe: var(--tk-accent);
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--fg);
     font-family: system-ui, -apple-system, sans-serif; touch-action: none; }
