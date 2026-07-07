@@ -27,6 +27,11 @@
   }
   .switch a.active { background: var(--accent); color: #12101a; font-weight: 700; }
   .switch a:not(.active):hover, .switch a:not(.active):focus-visible { background: #1b1826; color: var(--fg); }
+  h2 {
+    font-size: 0.8rem; letter-spacing: 0.3em; color: var(--accent);
+    margin: 2.4rem 0 0.6rem; text-transform: uppercase; font-weight: 700;
+  }
+  h2:first-of-type { margin-top: 0; }
   ul { list-style: none; padding: 0; display: grid; gap: 0; max-width: 46rem; }
   li { border-top: 1px solid var(--line); }
   li:last-child { border-bottom: 1px solid var(--line); }
@@ -47,17 +52,31 @@
     <a href="../">🧊 Web サイト</a>
     <a class="active" href="./" aria-current="page">🎮 ゲーム</a>
   </nav>
+
+  <h2>アクション・シューティング</h2>
+  <ul>
+    <li><a href="./lantern-run/"><span class="name">lantern-run 🏮</span><span class="desc">回避ラン / 火の玉で鳥居の窓をくぐり抜ける</span></a></li>
+    <li><a href="./meteor-defense/"><span class="name">meteor-defense ☄️</span><span class="desc">迎撃シューター / 爆風で流星を撃ち落とし街を守る</span></a></li>
+    <li><a href="./breakout-neon/"><span class="name">breakout-neon 🧱</span><span class="desc">ブロック崩し / 端当て角度調整・全 3 レベル</span></a></li>
+  </ul>
+
+  <h2>反射神経・縁日</h2>
+  <ul>
+    <li><a href="./mogura-pop/"><span class="name">mogura-pop 🔨</span><span class="desc">モグラ叩き / 金モグラ 3 倍・爆弾減点・45 秒</span></a></li>
+    <li><a href="./kingyo-sukui/"><span class="name">kingyo-sukui 🐠</span><span class="desc">金魚すくい / ポイが破れるまでに何匹すくえるか</span></a></li>
+  </ul>
+
+  <h2>パズル・戦略</h2>
   <ul>
     <li><a href="./stack-tower/"><span class="name">stack-tower 🏗️</span><span class="desc">積み上げ系 / タイミングでブロックを重ねる</span></a></li>
-    <li><a href="./lantern-run/"><span class="name">lantern-run 🏮</span><span class="desc">回避ラン / 火の玉で鳥居の窓をくぐり抜ける</span></a></li>
-    <li><a href="./kingyo-sukui/"><span class="name">kingyo-sukui 🐠</span><span class="desc">金魚すくい / ポイが破れるまでに何匹すくえるか</span></a></li>
-    <li><a href="./meteor-defense/"><span class="name">meteor-defense ☄️</span><span class="desc">迎撃シューター / 爆風で流星を撃ち落とし街を守る</span></a></li>
-    <li><a href="./tilt-maze/"><span class="name">tilt-maze 🎱</span><span class="desc">玉転がし / 盤を傾けて 3 面タイムアタック</span></a></li>
-    <li><a href="./rhythm-taps/"><span class="name">rhythm-taps 🥁</span><span class="desc">リズム / 生成ビートに合わせて 4 レーンを叩く</span></a></li>
     <li><a href="./snake-3d/"><span class="name">snake-3d 🐍</span><span class="desc">スネーク / ネオン盤面・スワイプ対応</span></a></li>
-    <li><a href="./breakout-neon/"><span class="name">breakout-neon 🧱</span><span class="desc">ブロック崩し / 端当て角度調整・全 3 レベル</span></a></li>
+    <li><a href="./tilt-maze/"><span class="name">tilt-maze 🎱</span><span class="desc">玉転がし / 盤を傾けて 3 面タイムアタック</span></a></li>
     <li><a href="./memory-cubes/"><span class="name">memory-cubes 🧊</span><span class="desc">記憶 / 光る順番を覚えるサイモン式</span></a></li>
-    <li><a href="./mogura-pop/"><span class="name">mogura-pop 🔨</span><span class="desc">反射神経 / 金モグラと爆弾のモグラ叩き 45 秒</span></a></li>
+  </ul>
+
+  <h2>リズム・音楽</h2>
+  <ul>
+    <li><a href="./rhythm-taps/"><span class="name">rhythm-taps 🥁</span><span class="desc">リズム / 生成ビートに合わせて 4 レーンを叩く</span></a></li>
   </ul>
 </body>
 </html>

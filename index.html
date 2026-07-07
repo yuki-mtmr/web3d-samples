@@ -27,6 +27,11 @@
   }
   .switch a.active { background: var(--accent); color: #101318; font-weight: 700; }
   .switch a:not(.active):hover, .switch a:not(.active):focus-visible { background: #171c26; color: var(--fg); }
+  h2 {
+    font-size: 0.8rem; letter-spacing: 0.3em; color: var(--accent);
+    margin: 2.4rem 0 0.6rem; text-transform: uppercase; font-weight: 700;
+  }
+  h2:first-of-type { margin-top: 0; }
   ul { list-style: none; padding: 0; display: grid; gap: 0; max-width: 46rem; }
   li { border-top: 1px solid var(--line); }
   li:last-child { border-bottom: 1px solid var(--line); }
@@ -47,18 +52,32 @@
     <a class="active" href="./" aria-current="page">🧊 Web サイト</a>
     <a href="./games/">🎮 ゲーム</a>
   </nav>
+
+  <h2>ランディング・マーケティング</h2>
   <ul>
-    <li><a href="./ennichi/"><span class="name">ennichi</span><span class="desc">縁日の夜 / 提灯・屋台・花火・祭囃子（WebAudio）の没入体験</span></a></li>
     <li><a href="./glass-hero/"><span class="name">glass-hero</span><span class="desc">ガラスモーフィズム / GLB アセット + transmission</span></a></li>
     <li><a href="./particle-field/"><span class="name">particle-field</span><span class="desc">ダークラグジュアリー / 12k 粒子の波 + マウス視差</span></a></li>
-    <li><a href="./scrolly-story/"><span class="name">scrolly-story</span><span class="desc">エディトリアル / スクロール駆動 3D ナラティブ</span></a></li>
-    <li><a href="./bento-lab/"><span class="name">bento-lab</span><span class="desc">ネオブルータリズム / ベントーグリッド内に 3 canvas</span></a></li>
-    <li><a href="./retro-terrain/"><span class="name">retro-terrain</span><span class="desc">レトロフューチャー / ワイヤーフレーム地形フライスルー</span></a></li>
     <li><a href="./aurora-flow/"><span class="name">aurora-flow</span><span class="desc">アンビエント SaaS / 揺らめくオーロラカーテン</span></a></li>
-    <li><a href="./museum-gallery/"><span class="name">museum-gallery</span><span class="desc">美術館ウォークスルー / スクロールで回廊を進む</span></a></li>
+  </ul>
+
+  <h2>プロダクト・データ</h2>
+  <ul>
     <li><a href="./product-orbit/"><span class="name">product-orbit</span><span class="desc">EC 商品ページ / ドラッグ回転 + カラーバリエーション</span></a></li>
     <li><a href="./data-globe/"><span class="name">data-globe</span><span class="desc">アナリティクス / 回転する地球とトラフィックアーク</span></a></li>
+  </ul>
+
+  <h2>ストーリーテリング</h2>
+  <ul>
+    <li><a href="./scrolly-story/"><span class="name">scrolly-story</span><span class="desc">エディトリアル / スクロール駆動 3D ナラティブ</span></a></li>
+    <li><a href="./museum-gallery/"><span class="name">museum-gallery</span><span class="desc">美術館ウォークスルー / スクロールで回廊を進む</span></a></li>
+  </ul>
+
+  <h2>没入体験・アート</h2>
+  <ul>
+    <li><a href="./ennichi/"><span class="name">ennichi</span><span class="desc">縁日の夜 / 提灯・屋台・花火・祭囃子（WebAudio）の没入体験</span></a></li>
     <li><a href="./zen-garden/"><span class="name">zen-garden</span><span class="desc">和ミニマル / 枯山水・花びら・クリックで波紋</span></a></li>
+    <li><a href="./bento-lab/"><span class="name">bento-lab</span><span class="desc">ネオブルータリズム / ベントーグリッド内に 3 canvas</span></a></li>
+    <li><a href="./retro-terrain/"><span class="name">retro-terrain</span><span class="desc">レトロフューチャー / ワイヤーフレーム地形フライスルー</span></a></li>
   </ul>
 </body>
 </html>
