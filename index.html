@@ -7,7 +7,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧊</text></svg>">
 <style>
   :root {
-    --bg: #101318; --fg: #e8eaf0; --muted: #8a90a0; --line: #262b36;
+    --bg: #101318; --fg: #e8eaf0; --muted: #8a90a0; --line: #262b36; --accent: #7ab8ff;
   }
   * { margin: 0; box-sizing: border-box; }
   body {
@@ -16,23 +16,37 @@
     min-height: 100vh; padding: clamp(2rem, 6vw, 5rem);
   }
   h1 { font-size: clamp(1.6rem, 4vw, 2.4rem); letter-spacing: -0.02em; }
-  p.lead { color: var(--muted); margin: 0.75rem 0 2.5rem; }
+  p.lead { color: var(--muted); margin: 0.75rem 0 1.5rem; }
+  .switch {
+    display: inline-flex; gap: 0; margin-bottom: 2.5rem;
+    border: 1px solid var(--line); border-radius: 999px; overflow: hidden;
+  }
+  .switch a {
+    padding: 0.55rem 1.5rem; color: var(--muted); text-decoration: none;
+    font-size: 0.85rem; letter-spacing: 0.08em; transition: background 150ms ease, color 150ms ease;
+  }
+  .switch a.active { background: var(--accent); color: #101318; font-weight: 700; }
+  .switch a:not(.active):hover, .switch a:not(.active):focus-visible { background: #171c26; color: var(--fg); }
   ul { list-style: none; padding: 0; display: grid; gap: 0; max-width: 46rem; }
   li { border-top: 1px solid var(--line); }
   li:last-child { border-bottom: 1px solid var(--line); }
-  a {
+  ul a {
     display: flex; justify-content: space-between; align-items: baseline; gap: 1rem;
     padding: 1.1rem 0.5rem; color: inherit; text-decoration: none;
     transition: background 150ms ease, padding-left 150ms ease;
   }
-  a:hover, a:focus-visible { background: #171c26; padding-left: 1rem; }
+  ul a:hover, ul a:focus-visible { background: #171c26; padding-left: 1rem; }
   .name { font-weight: 600; }
   .desc { color: var(--muted); font-size: 0.85rem; text-align: right; }
 </style>
 </head>
 <body>
   <h1>web3d-kit — sample sites</h1>
-  <p class="lead">3D 表現 × 5 つのデザイン方向性のサンプル。各行をクリックで開く。</p>
+  <p class="lead">3D 表現 × 11 のデザインパターン。各行をクリックで開く。</p>
+  <nav class="switch" aria-label="カテゴリ切替">
+    <a class="active" href="./" aria-current="page">🧊 Web サイト</a>
+    <a href="./games/">🎮 ゲーム</a>
+  </nav>
   <ul>
     <li><a href="./ennichi/"><span class="name">ennichi</span><span class="desc">縁日の夜 / 提灯・屋台・花火・祭囃子（WebAudio）の没入体験</span></a></li>
     <li><a href="./glass-hero/"><span class="name">glass-hero</span><span class="desc">ガラスモーフィズム / GLB アセット + transmission</span></a></li>
@@ -45,21 +59,6 @@
     <li><a href="./product-orbit/"><span class="name">product-orbit</span><span class="desc">EC 商品ページ / ドラッグ回転 + カラーバリエーション</span></a></li>
     <li><a href="./data-globe/"><span class="name">data-globe</span><span class="desc">アナリティクス / 回転する地球とトラフィックアーク</span></a></li>
     <li><a href="./zen-garden/"><span class="name">zen-garden</span><span class="desc">和ミニマル / 枯山水・花びら・クリックで波紋</span></a></li>
-  </ul>
-
-  <h1 style="margin-top:3rem">sample games</h1>
-  <p class="lead">three.js ミニゲーム × 5 ジャンル。すべて単一ファイル・ビルド不要。</p>
-  <ul>
-    <li><a href="./games/stack-tower/"><span class="name">stack-tower</span><span class="desc">積み上げ系 / タイミングでブロックを重ねる</span></a></li>
-    <li><a href="./games/lantern-run/"><span class="name">lantern-run</span><span class="desc">回避ラン / 火の玉で鳥居の窓をくぐり抜ける</span></a></li>
-    <li><a href="./games/kingyo-sukui/"><span class="name">kingyo-sukui</span><span class="desc">金魚すくい / ポイが破れるまでに何匹すくえるか</span></a></li>
-    <li><a href="./games/meteor-defense/"><span class="name">meteor-defense</span><span class="desc">迎撃シューター / 爆風で流星を撃ち落とし街を守る</span></a></li>
-    <li><a href="./games/tilt-maze/"><span class="name">tilt-maze</span><span class="desc">玉転がし / 盤を傾けて 3 面タイムアタック</span></a></li>
-    <li><a href="./games/rhythm-taps/"><span class="name">rhythm-taps</span><span class="desc">リズム / 生成ビートに合わせて 4 レーンを叩く</span></a></li>
-    <li><a href="./games/snake-3d/"><span class="name">snake-3d</span><span class="desc">スネーク / ネオン盤面・スワイプ対応</span></a></li>
-    <li><a href="./games/breakout-neon/"><span class="name">breakout-neon</span><span class="desc">ブロック崩し / 端当て角度調整・全 3 レベル</span></a></li>
-    <li><a href="./games/memory-cubes/"><span class="name">memory-cubes</span><span class="desc">記憶 / 光る順番を覚えるサイモン式</span></a></li>
-    <li><a href="./games/mogura-pop/"><span class="name">mogura-pop</span><span class="desc">反射神経 / 金モグラと爆弾のモグラ叩き 45 秒</span></a></li>
   </ul>
 </body>
 </html>
