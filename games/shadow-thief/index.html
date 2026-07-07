@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>SHADOW THIEF</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🕵️</text></svg>">
+<style>
+  :root { --bg: #060810; --fg: #dfe9f2; --accent: #38f2c6; --danger: #ff6a3d; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--fg);
+    font-family: system-ui, -apple-system, sans-serif; touch-action: none; }
+  canvas { display: block; }
+  .hud { position: fixed; top: 12px; left: 0; right: 0; display: flex;
+    justify-content: space-between; padding: 0 16px; font-size: clamp(0.85rem, 2.3vw, 1.05rem);
+    pointer-events: none; text-shadow: 0 0 8px rgba(56, 242, 198, 0.5); letter-spacing: 0.04em; }
+  .hud .group { display: flex; gap: 14px; }
+  .banner { position: fixed; top: 46px; left: 50%; transform: translate(-50%, -8px);
+    padding: 6px 18px; border: 1px solid var(--danger); border-radius: 999px;
+    background: rgba(6, 8, 16, 0.78); color: var(--danger); font-size: 0.82rem;
+    letter-spacing: 0.06em; opacity: 0; transition: opacity 0.3s, transform 0.3s;
+    pointer-events: none; white-space: nowrap; text-shadow: 0 0 8px rgba(255, 106, 61, 0.6); }
+  .banner.show { opacity: 1; transform: translate(-50%, 0); }
+  .flash { position: fixed; inset: 0; pointer-events: none; opacity: 0;
+    background: radial-gradient(ellipse at center, rgba(255, 90, 50, 0.0) 40%, rgba(255, 40, 20, 0.55) 100%);
+    transition: opacity 0.18s ease-out; }
+  .flash.show { opacity: 1; }
+  .overlay { position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 16px; text-align: center;
+    background: rgba(6, 8, 16, 0.85); backdrop-filter: blur(4px); transition: opacity 0.25s; }
+  .overlay.hidden { opacity: 0; pointer-events: none; }
+  .overlay h1 { font-size: clamp(1.8rem, 5.6vw, 2.8rem); letter-spacing: 0.08em;
+    text-shadow: 0 0 24px var(--accent); }
+  .overlay p { opacity: 0.85; max-width: 34ch; line-height: 1.7; font-size: 0.95rem; }
+  .overlay p .safe { color: var(--accent); }
+  .overlay p .danger { color: var(--danger); }
+  .btn { pointer-events: auto; cursor: pointer; border: 1px solid var(--accent);
+    background: transparent; color: var(--accent); padding: 12px 36px; font-size: 1.05rem;
+    border-radius: 8px; letter-spacing: 0.1em; transition: background 0.15s, color 0.15s; }
+  .btn:hover { background: var(--accent); color: var(--bg); }
+  .mute { position: fixed; bottom: 12px; right: 12px; font-size: 1.3rem; opacity: 0.6;
+    cursor: pointer; background: none; border: none; color: var(--fg); }
+</style>
+<script type="importmap">
+  { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div class="hud">
+  <span class="group">
+    <span id="score">SCORE 0</span>
+    <span id="gems">GEMS 0</span>
+  </span>
+  <span id="best">BEST 0</span>
+</div>
+<div class="banner" id="banner"></div>
+<div class="flash" id="flash"></div>
+<div class="overlay" id="titleOverlay">
+  <h1>SHADOW THIEF</h1>
+  <p>スワイプ / WASD / 矢印キーで影を動かし、<span class="danger">オレンジのサーチライト</span>に触れずに
+    <span class="safe">シアンの宝石</span>まで忍び寄って盗め。見つかったら即アウト。</p>
+  <button class="btn" id="startBtn">START</button>
+</div>
+<div class="overlay hidden" id="overOverlay">
+  <h1 id="overTitle">見つかった!</h1>
+  <p id="overScore"></p>
+  <button class="btn" id="retryBtn">RETRY</button>
+</div>
+<button class="mute" id="muteBtn" aria-label="mute">🔊</button>
+
+<script type="module">
+import * as THREE from 'three';
+import { createLoop } from './lib/loop.mjs';
+import { createFSM } from './lib/fsm.mjs';
+import { createInputBuffer } from './lib/input.mjs';
+import { bindKeyboard, bindPointer } from './lib/input-bindings.mjs';
+import { createScoreStore } from './lib/score.mjs';
+import { createRamp, createEventSchedule } from './lib/difficulty.mjs';
+import { createSfx } from './lib/sfx.mjs';
+import { createShake, createHitstop, createBurstPool, lerp } from './lib/juice.mjs';
+
+// ---------- 定数 ----------
+const GAME_ID = 'shadow-thief';
+const CELL = 1.15;
+const HALF = 4; // グリッドは -4..4 の 9x9
+const ROOM_HALF = HALF * CELL + 0.5;
+const ROOM_VIEW = ROOM_HALF + 1.3;
+const SECTOR_ARC = 0.46; // ライト半開角(rad)
+const MAX_LIGHTS = 6;
+const GEM_CATCH_DIST = 0.4;
+
+// ---------- 基盤セットアップ ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // principles.md #8
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x060810, 10, 22); // principles.md #9
+scene.background = new THREE.Color(0x060810);
+
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 60);
+camera.position.set(0, 12, 0);
+camera.up.set(0, 0, -1); // 真上から見下ろす退化を回避
+camera.lookAt(0, 0, 0);
+function updateCameraFrustum() {
+  const aspect = window.innerWidth / window.innerHeight;
+  let w, h;
+  if (aspect >= 1) { h = ROOM_VIEW; w = ROOM_VIEW * aspect; } else { w = ROOM_VIEW; h = ROOM_VIEW / aspect; }
+  camera.left = -w; camera.right = w; camera.top = h; camera.bottom = -h;
+  camera.updateProjectionMatrix();
+}
+updateCameraFrustum();
+
+window.addEventListener('resize', () => {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  updateCameraFrustum();
+});
+
+scene.add(new THREE.HemisphereLight(0x3a4a6a, 0x0a0e1a, 0.9));
+const key = new THREE.DirectionalLight(0xbfe9ff, 0.8);
+key.position.set(3, 10, 2);
+scene.add(key);
+
+// ---------- ワールド構築 ----------
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(ROOM_HALF * 2, ROOM_HALF * 2),
+  new THREE.MeshStandardMaterial({ color: 0x0a0f1c, roughness: 1 }),
+);
+floor.rotation.x = -Math.PI / 2;
+scene.add(floor);
+
+const grid = new THREE.GridHelper(ROOM_HALF * 2, HALF * 2, 0x1c3a44, 0x101a2a);
+grid.position.y = 0.001;
+scene.add(grid);
+
+const wallGeo = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(-ROOM_HALF, 0.02, -ROOM_HALF),
+  new THREE.Vector3(ROOM_HALF, 0.02, -ROOM_HALF),
+  new THREE.Vector3(ROOM_HALF, 0.02, ROOM_HALF),
+  new THREE.Vector3(-ROOM_HALF, 0.02, ROOM_HALF),
+]);
+const walls = new THREE.LineLoop(wallGeo, new THREE.LineBasicMaterial({ color: 0x38f2c6, transparent: true, opacity: 0.45 }));
+scene.add(walls);
+
+// プレイヤー(影の盗人)
+const player = new THREE.Mesh(
+  new THREE.ConeGeometry(0.34, 0.72, 4),
+  new THREE.MeshStandardMaterial({ color: 0x0e1220, emissive: 0x38f2c6, emissiveIntensity: 0.55, roughness: 0.5 }),
+);
+player.position.set(0, 0.36, HALF * CELL);
+scene.add(player);
+
+const playerRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.42, 0.5, 24),
+  new THREE.MeshBasicMaterial({ color: 0x38f2c6, transparent: true, opacity: 0.5, side: THREE.DoubleSide }),
+);
+playerRing.rotation.x = -Math.PI / 2;
+playerRing.position.y = 0.02;
+scene.add(playerRing);
+
+// 宝石(ゴール)
+const gem = new THREE.Mesh(
+  new THREE.OctahedronGeometry(0.3, 0),
+  new THREE.MeshStandardMaterial({ color: 0x0d2a24, emissive: 0x38f2c6, emissiveIntensity: 1, roughness: 0.25 }),
+);
+scene.add(gem);
+
+const gemRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.46, 0.56, 28),
+  new THREE.MeshBasicMaterial({ color: 0x38f2c6, transparent: true, opacity: 0.55, side: THREE.DoubleSide }),
+);
+gemRing.rotation.x = -Math.PI / 2;
+gemRing.position.y = 0.02;
+scene.add(gemRing);
+const gemPos = { x: 0, z: -HALF * CELL };
+
+// サーチライト(扇形) — InstancedMesh 1 draw call (principles.md #8)
+function createSectorGeometry(radius, halfArc, segments = 20) {
+  const pos = [];
+  for (let i = 0; i < segments; i += 1) {
+    const a0 = -halfArc + (2 * halfArc * i) / segments;
+    const a1 = -halfArc + (2 * halfArc * (i + 1)) / segments;
+    pos.push(0, 0, 0);
+    pos.push(Math.cos(a0) * radius, 0, Math.sin(a0) * radius);
+    pos.push(Math.cos(a1) * radius, 0, Math.sin(a1) * radius);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  return geo;
+}
+const sectorGeo = createSectorGeometry(1, SECTOR_ARC);
+const sectorMat = new THREE.MeshBasicMaterial({
+  color: 0xff6a3d, transparent: true, opacity: 0.32, side: THREE.DoubleSide,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+});
+const lightMesh = new THREE.InstancedMesh(sectorGeo, sectorMat, MAX_LIGHTS);
+lightMesh.frustumCulled = false; // 少数インスタンスの境界球誤検出でカリングされるのを防ぐ
+scene.add(lightMesh);
+
+const markerGeo = new THREE.RingGeometry(0.1, 0.2, 16);
+const markerMat = new THREE.MeshBasicMaterial({ color: 0xff6a3d, transparent: true, opacity: 0.4, side: THREE.DoubleSide });
+const markerMesh = new THREE.InstancedMesh(markerGeo, markerMat, MAX_LIGHTS);
+scene.add(markerMesh);
+
+const dummy = new THREE.Object3D();
+
+const LIGHT_DEFS = [
+  { x: -3.2, z: -3.2, radius: 3.4, speedMul: 1.0 },
+  { x: 3.2, z: -3.2, radius: 3.4, speedMul: 1.1 },
+  { x: -3.2, z: 0.2, radius: 3.0, speedMul: 0.9 },
+  { x: 3.2, z: 0.2, radius: 3.0, speedMul: 1.15 },
+  { x: 0, z: -4.0, radius: 3.6, speedMul: 0.85 },
+  { x: 0, z: 1.0, radius: 1.9, speedMul: 1.25 },
+];
+const lights = LIGHT_DEFS.map((d, i) => ({
+  pivot: { x: d.x, z: d.z },
+  radius: d.radius,
+  halfArc: SECTOR_ARC,
+  arcRange: 0.8 + (i % 3) * 0.12,
+  baseAngle: Math.atan2(-d.z, -d.x),
+  angle: 0,
+  phase: 0,
+  dir: 1,
+  speedMul: d.speedMul,
+  flipTimer: 2,
+  canSpin: i % 2 === 0,
+  active: false,
+}));
+
+// ---------- 基盤モジュールの結線 ----------
+const input = createInputBuffer();
+bindKeyboard(input, {
+  ArrowLeft: 'left', a: 'left', A: 'left',
+  ArrowRight: 'right', d: 'right', D: 'right',
+  ArrowUp: 'up', w: 'up', W: 'up',
+  ArrowDown: 'down', s: 'down', S: 'down',
+  Escape: 'pause',
+});
+bindPointer(input, document.body);
+
+const sfx = createSfx();
+const shake = createShake();
+const hitstop = createHitstop();
+const burstDanger = createBurstPool(scene, { color: 0xff6a3d });
+const burstGem = createBurstPool(scene, { color: 0x38f2c6 });
+const scoreStore = createScoreStore(GAME_ID);
+
+const lightCountRamp = createRamp({ base: 2, perSecond: 0.035, max: MAX_LIGHTS }); // principles.md #7
+const rotSpeedRamp = createRamp({ base: 0.35, perSecond: 0.008, max: 1.05 });
+const events = createEventSchedule([
+  { at: 18, name: 'erratic' },
+  { at: 36, name: 'fullspin' },
+  { at: 54, name: 'fast-pulse' },
+]);
+const EVENT_LABELS = {
+  erratic: 'ライトが不規則に反転し始めた',
+  fullspin: '一部のライトが全周回転を開始',
+  'fast-pulse': 'ライトの速度が上昇',
+};
+
+// ---------- ゲーム状態 ----------
+const state = {
+  gridX: 0, gridZ: HALF, playerX: 0, playerZ: HALF * CELL,
+  time: 0, score: 0, gems: 0, erratic: false, fullspin: false, fastPulse: false,
+};
+
+const ui = {
+  score: document.getElementById('score'),
+  gems: document.getElementById('gems'),
+  best: document.getElementById('best'),
+  banner: document.getElementById('banner'),
+  flash: document.getElementById('flash'),
+  title: document.getElementById('titleOverlay'),
+  over: document.getElementById('overOverlay'),
+  overTitle: document.getElementById('overTitle'),
+  overScore: document.getElementById('overScore'),
+};
+ui.best.textContent = `BEST ${scoreStore.best()}`;
+let bannerTimer = null;
+
+function showBanner(name) {
+  ui.banner.textContent = EVENT_LABELS[name] ?? name;
+  ui.banner.classList.add('show');
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => ui.banner.classList.remove('show'), 2200);
+}
+
+function flashDanger() {
+  ui.flash.classList.add('show');
+  setTimeout(() => ui.flash.classList.remove('show'), 200);
+}
+
+function randomGemCell() {
+  let gx = 0;
+  let gz = 0;
+  let tries = 0;
+  do {
+    gx = Math.floor(Math.random() * (2 * HALF + 1)) - HALF;
+    gz = Math.floor(Math.random() * (2 * HALF + 1)) - HALF;
+    tries += 1;
+  } while (tries < 40 && Math.abs(gx - state.gridX) + Math.abs(gz - state.gridZ) < 4);
+  return { gx, gz };
+}
+
+function spawnGem() {
+  const { gx, gz } = randomGemCell();
+  gemPos.x = gx * CELL;
+  gemPos.z = gz * CELL;
+}
+
+function resetRun() {
+  state.gridX = 0; state.gridZ = HALF;
+  state.playerX = 0; state.playerZ = HALF * CELL;
+  state.time = 0; state.score = 0; state.gems = 0;
+  state.erratic = false; state.fullspin = false; state.fastPulse = false;
+  events.reset();
+  for (const L of lights) {
+    L.angle = L.baseAngle; L.phase = Math.random() * Math.PI * 2; L.dir = 1;
+    L.flipTimer = 2 + Math.random() * 2; L.active = false;
+  }
+  spawnGem();
+  input.reset();
+}
+
+// ---------- FSM (principles.md #2) ----------
+const fsm = createFSM({
+  title: {
+    enter: () => ui.title.classList.remove('hidden'),
+    exit: () => { ui.title.classList.add('hidden'); sfx.unlock(); },
+  },
+  playing: {
+    enter: (from) => { if (from !== 'paused') resetRun(); },
+  },
+  paused: {},
+  gameover: {
+    enter: () => {
+      const isBest = scoreStore.submit(state.score);
+      ui.overTitle.textContent = isBest ? 'NEW BEST!' : '見つかった!';
+      ui.overScore.textContent = `SCORE ${state.score} / GEMS ${state.gems} / BEST ${scoreStore.best()}`;
+      ui.best.textContent = `BEST ${scoreStore.best()}`;
+      ui.over.classList.remove('hidden');
+    },
+    exit: () => ui.over.classList.add('hidden'),
+  },
+}, 'title');
+
+document.getElementById('startBtn').addEventListener('click', () => fsm.transition('playing'));
+document.getElementById('retryBtn').addEventListener('click', () => fsm.transition('playing')); // principles.md #5
+document.getElementById('muteBtn').addEventListener('click', (e) => {
+  sfx.setMuted(!sfx.isMuted());
+  e.target.textContent = sfx.isMuted() ? '🔇' : '🔊';
+});
+
+// ---------- 更新ロジック ----------
+function updateLight(L, dt, rotSpeed) {
+  const speed = rotSpeed * L.speedMul;
+  if (state.erratic) {
+    L.flipTimer -= dt;
+    if (L.flipTimer <= 0) { L.dir *= -1; L.flipTimer = 1.2 + Math.random() * 2; }
+  }
+  if (state.fullspin && L.canSpin) {
+    L.angle += speed * L.dir * dt * 1.6;
+  } else {
+    L.phase += speed * L.dir * dt;
+    L.angle = L.baseAngle + Math.sin(L.phase) * L.arcRange;
+  }
+}
+
+function isCaught(L, px, pz) {
+  const dx = px - L.pivot.x;
+  const dz = pz - L.pivot.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist > L.radius) return false;
+  const angleToPlayer = Math.atan2(dz, dx);
+  let diff = angleToPlayer - L.angle;
+  diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+  return Math.abs(diff) < L.halfArc;
+}
+
+function triggerCapture() {
+  burstDanger.burst(new THREE.Vector3(state.playerX, 0.4, state.playerZ), 40, 6);
+  shake.add(0.85);
+  hitstop.trigger(0.12);
+  sfx.crash();
+  flashDanger();
+  fsm.transition('gameover');
+}
+
+function collectGem() {
+  state.gems += 1;
+  burstGem.burst(new THREE.Vector3(gemPos.x, 0.5, gemPos.z), 26, 4);
+  sfx.ping(0.12);
+  spawnGem();
+}
+
+function updatePlaying(dt) {
+  state.time += dt;
+  state.score = state.gems * 200 + Math.floor(state.time * 3);
+
+  for (const fired of events.fire(state.time)) {
+    if (fired.name === 'erratic') state.erratic = true;
+    if (fired.name === 'fullspin') state.fullspin = true;
+    if (fired.name === 'fast-pulse') state.fastPulse = true;
+    sfx.rise();
+    showBanner(fired.name);
+  }
+
+  const pressed = input.consumePressed();
+  if (pressed.has('pause')) { fsm.transition('paused'); return; }
+  let dgx = 0;
+  let dgz = 0;
+  if (pressed.has('left')) dgx = -1;
+  else if (pressed.has('right')) dgx = 1;
+  else if (pressed.has('up')) dgz = -1;
+  else if (pressed.has('down')) dgz = 1;
+  if (dgx !== 0 || dgz !== 0) {
+    state.gridX = Math.min(HALF, Math.max(-HALF, state.gridX + dgx));
+    state.gridZ = Math.min(HALF, Math.max(-HALF, state.gridZ + dgz));
+    sfx.click(0.045);
+  }
+
+  // 離散状態(グリッド)と連続描画(lerp)の分離。当たり判定は連続位置を使用 (principles.md #3)
+  state.playerX = lerp(state.playerX, state.gridX * CELL, 0.32);
+  state.playerZ = lerp(state.playerZ, state.gridZ * CELL, 0.32);
+
+  const activeCount = Math.min(lights.length, Math.floor(lightCountRamp.at(state.time)));
+  const rotSpeed = state.fastPulse ? rotSpeedRamp.at(state.time) * 1.35 : rotSpeedRamp.at(state.time);
+
+  for (let i = 0; i < lights.length; i += 1) {
+    const L = lights[i];
+    L.active = i < activeCount;
+    if (!L.active) continue;
+    updateLight(L, dt, rotSpeed);
+    if (isCaught(L, state.playerX, state.playerZ)) {
+      triggerCapture();
+      return;
+    }
+  }
+
+  const dx = state.playerX - gemPos.x;
+  const dz = state.playerZ - gemPos.z;
+  if (Math.hypot(dx, dz) < GEM_CATCH_DIST) collectGem();
+}
+
+// ---------- 描画同期 ----------
+function syncLights() {
+  for (let i = 0; i < lights.length; i += 1) {
+    const L = lights[i];
+    if (L.active) {
+      dummy.position.set(L.pivot.x, 0.03, L.pivot.z);
+      dummy.rotation.set(0, -L.angle, 0);
+      dummy.scale.setScalar(L.radius);
+    } else {
+      // 非アクティブ時も pivot 付近に留め、境界球の異常肥大化によるフラスタムカリング誤爆を防ぐ
+      dummy.position.set(L.pivot.x, 0.03, L.pivot.z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.setScalar(0.0001);
+    }
+    dummy.updateMatrix();
+    lightMesh.setMatrixAt(i, dummy.matrix);
+
+    dummy.position.set(L.pivot.x, 0.025, L.pivot.z);
+    dummy.rotation.set(-Math.PI / 2, 0, 0);
+    dummy.scale.setScalar(1);
+    dummy.updateMatrix();
+    markerMesh.setMatrixAt(i, dummy.matrix);
+  }
+  lightMesh.instanceMatrix.needsUpdate = true;
+  markerMesh.instanceMatrix.needsUpdate = true;
+}
+
+const loop = createLoop({ // principles.md #1
+  fixedStep: 1 / 60,
+  update: (dt) => {
+    const scaled = hitstop.scale(dt);
+    if (fsm.is('playing')) updatePlaying(scaled);
+    if (fsm.is('paused') && input.consumePressed().has('pause')) fsm.transition('playing');
+    shake.update(dt);
+    burstDanger.update(scaled);
+    burstGem.update(scaled);
+  },
+  render: () => {
+    player.position.x = state.playerX;
+    player.position.z = state.playerZ;
+    player.position.y = 0.36 + Math.sin(state.time * 6) * 0.03;
+    player.rotation.y += 0.06;
+    playerRing.position.x = state.playerX;
+    playerRing.position.z = state.playerZ;
+
+    gem.position.set(gemPos.x, 0.45 + Math.sin(state.time * 3) * 0.06, gemPos.z);
+    gem.rotation.y += 0.02;
+    gemRing.position.x = gemPos.x;
+    gemRing.position.z = gemPos.z;
+    gemRing.scale.setScalar(1 + Math.sin(state.time * 4) * 0.08);
+
+    sectorMat.opacity = 0.26 + 0.08 * Math.sin(state.time * 5);
+    syncLights();
+
+    const offset = shake.offset();
+    camera.position.set(offset.x, 12, offset.y);
+    camera.lookAt(0, 0, 0);
+
+    ui.score.textContent = `SCORE ${state.score}`;
+    ui.gems.textContent = `GEMS ${state.gems}`;
+    renderer.render(scene, camera);
+  },
+});
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => loop.tick(clock.getDelta()));
+
+// 検証パイプライン用フック(scripts/verify-game.mjs が参照)
+window.__GAME__ = { fsm, state, rendererInfo: () => renderer.info.render };
+</script>
+</body>
+</html>

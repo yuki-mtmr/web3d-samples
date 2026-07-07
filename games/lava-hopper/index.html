@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>LAVA HOPPER</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌋</text></svg>">
+<style>
+  :root { --bg: #170b08; --fg: #ffe9d8; --accent: #ffb347; --danger: #ff3b30; --safe: #35e08a; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--fg);
+    font-family: system-ui, -apple-system, sans-serif; touch-action: none; }
+  canvas { display: block; }
+  .hud { position: fixed; top: 12px; left: 0; right: 0; display: flex;
+    justify-content: space-between; padding: 0 16px; font-size: clamp(0.9rem, 2.5vw, 1.1rem);
+    pointer-events: none; text-shadow: 0 0 8px rgba(255, 140, 40, 0.6); letter-spacing: 0.04em; }
+  .hud .warn { color: var(--danger); text-shadow: 0 0 10px rgba(255, 59, 48, 0.8); }
+  .overlay { position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 16px; text-align: center;
+    background: radial-gradient(ellipse at center, rgba(60, 20, 10, 0.72), rgba(10, 5, 4, 0.92));
+    backdrop-filter: blur(4px); transition: opacity 0.25s; }
+  .overlay.hidden { opacity: 0; pointer-events: none; }
+  .overlay h1 { font-size: clamp(2rem, 6vw, 3rem); letter-spacing: 0.08em;
+    text-shadow: 0 0 24px var(--accent); }
+  .overlay p { opacity: 0.9; max-width: 34ch; line-height: 1.7; }
+  .overlay p .safe { color: var(--safe); font-weight: 600; }
+  .overlay p .danger { color: var(--danger); font-weight: 600; }
+  .btn { pointer-events: auto; cursor: pointer; border: 1px solid var(--accent);
+    background: transparent; color: var(--accent); padding: 12px 36px; font-size: 1.05rem;
+    border-radius: 8px; letter-spacing: 0.1em; transition: background 0.15s, color 0.15s; }
+  .btn:hover { background: var(--accent); color: var(--bg); }
+  .mute { position: fixed; bottom: 12px; right: 12px; font-size: 1.3rem; opacity: 0.6;
+    cursor: pointer; background: none; border: none; color: var(--fg); }
+</style>
+<script type="importmap">
+  { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div class="hud">
+  <span id="score">HOPS 0</span>
+  <span id="warn" class="warn" style="opacity:0"></span>
+  <span id="best">BEST 0</span>
+</div>
+<div class="overlay" id="titleOverlay">
+  <h1>LAVA HOPPER</h1>
+  <p>タップ / スペース で <span class="safe">ジャンプ</span>。
+    足場は着地した瞬間から <span class="danger">沈み始める</span>。
+    沈みきる前に次へ跳び続けろ。30 秒を超えると間欠泉が来る。</p>
+  <button class="btn" id="startBtn">START</button>
+</div>
+<div class="overlay hidden" id="overOverlay">
+  <h1 id="overTitle">GAME OVER</h1>
+  <p id="overScore"></p>
+  <button class="btn" id="retryBtn">RETRY</button>
+</div>
+<button class="mute" id="muteBtn" aria-label="mute">🔊</button>
+
+<script type="module">
+import * as THREE from 'three';
+import { createLoop } from './lib/loop.mjs';
+import { createFSM } from './lib/fsm.mjs';
+import { createInputBuffer } from './lib/input.mjs';
+import { bindKeyboard, bindPointer } from './lib/input-bindings.mjs';
+import { createScoreStore } from './lib/score.mjs';
+import { createRamp, createEventSchedule } from './lib/difficulty.mjs';
+import { createSfx } from './lib/sfx.mjs';
+import { createShake, createHitstop, createBurstPool, lerp, easeOutCubic } from './lib/juice.mjs';
+
+// ---------- 定数 ----------
+const GAME_ID = 'lava-hopper';
+const STEP_Z = 3.2;           // 足場間の前進距離
+const SLOTS = 12;             // InstancedMesh に保持する足場スロット数(index-1 .. index+10)
+const BEHIND = 1;
+const HOP_DURATION = 0.3;     // ジャンプ演出の所要時間(s)
+const GEYSER_WARN = 0.85;     // 間欠泉の予告 → 噴火までの猶予(s)
+const SAFE_COLOR = new THREE.Color(0x35e08a);
+const DANGER_COLOR = new THREE.Color(0xff3b30);
+const FLASH_COLOR = new THREE.Color(0xfff2c6);
+
+function platformPos(i) {
+  return { x: Math.sin(i * 0.85) * 2.35, y: 0, z: -i * STEP_Z };
+}
+
+// ---------- 基盤セットアップ ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // principles.md #8
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const fogBase = new THREE.Color(0x1a0d09);
+const fogGeyser = new THREE.Color(0x2a0806);
+scene.fog = new THREE.Fog(fogBase.clone(), 12, 34); // principles.md #9
+scene.background = fogBase.clone();
+
+const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(0, 4.4, 6.6);
+const cameraLook = new THREE.Vector3(0, 0.6, -6);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+scene.add(new THREE.HemisphereLight(0xffcf9e, 0x2a0e08, 0.85));
+const key = new THREE.DirectionalLight(0xffe2b8, 1.3);
+key.position.set(4, 9, 5);
+scene.add(key);
+const emberLight = new THREE.PointLight(0xff6a2e, 1.6, 24, 2);
+emberLight.position.set(0, 1.6, 0);
+scene.add(emberLight);
+
+// ---------- ワールド構築 ----------
+const lava = new THREE.Mesh(
+  new THREE.PlaneGeometry(200, 400, 1, 1),
+  new THREE.MeshStandardMaterial({ color: 0x7a1405, emissive: 0xff3300, emissiveIntensity: 1.1, roughness: 0.55 }),
+);
+lava.rotation.x = -Math.PI / 2;
+lava.position.set(0, -2.3, -60);
+scene.add(lava);
+
+const platformGeo = new THREE.CylinderGeometry(0.95, 1.05, 0.5, 8);
+const platformMat = new THREE.MeshStandardMaterial({ roughness: 0.45, metalness: 0.1 });
+const platformMesh = new THREE.InstancedMesh(platformGeo, platformMat, SLOTS); // principles.md #8: 1 draw call
+platformMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+scene.add(platformMesh);
+for (let i = 0; i < SLOTS; i += 1) platformMesh.setColorAt(i, SAFE_COLOR);
+
+const player = new THREE.Mesh(
+  new THREE.CapsuleGeometry(0.42, 0.5, 4, 8),
+  new THREE.MeshStandardMaterial({ color: 0xfff0d8, emissive: 0xffa347, emissiveIntensity: 0.5, roughness: 0.3 }),
+);
+scene.add(player);
+
+// ---------- 基盤モジュールの結線 ----------
+const input = createInputBuffer();
+bindKeyboard(input, {
+  ArrowLeft: 'action', ArrowRight: 'action', ArrowUp: 'action', ArrowDown: 'action',
+  ' ': 'action', Spacebar: 'action', Enter: 'action', Escape: 'pause',
+});
+bindPointer(input, document.body); // タップ・スワイプいずれも 1 アクション = ジャンプ扱い
+
+const sfx = createSfx();
+const shake = createShake();
+const hitstop = createHitstop();
+const burst = createBurstPool(scene, { color: 0xffb26b });
+const scoreStore = createScoreStore(GAME_ID);
+
+const sinkRamp = createRamp({ base: 2.6, perSecond: -0.02, min: 1.05 });          // principles.md #7: 沈下速度↑
+const geyserIntervalRamp = createRamp({ base: 4.4, perSecond: -0.025, min: 2.1 });
+const events = createEventSchedule([{ at: 30, name: 'geyser-mode' }]);            // 30s で質的イベント
+
+// ---------- ゲーム状態 ----------
+const state = {
+  index: 0, hopping: false, hopStart: 0, landedAt: 0,
+  time: 0, score: 0, geyserMode: false, geyserTimer: 4.4, pendingGeyser: null,
+};
+
+const visual = { x: 0, y: 0.5, z: 0 };
+
+const ui = {
+  score: document.getElementById('score'),
+  best: document.getElementById('best'),
+  warn: document.getElementById('warn'),
+  title: document.getElementById('titleOverlay'),
+  over: document.getElementById('overOverlay'),
+  overTitle: document.getElementById('overTitle'),
+  overScore: document.getElementById('overScore'),
+};
+ui.best.textContent = `BEST ${scoreStore.best()}`;
+
+function resetRun() {
+  state.index = 0; state.hopping = false; state.hopStart = 0; state.landedAt = 0;
+  state.time = 0; state.score = 0; state.geyserMode = false; state.pendingGeyser = null;
+  state.geyserTimer = geyserIntervalRamp.at(0);
+  scene.fog.color.copy(fogBase);
+  scene.background.copy(fogBase);
+  events.reset();
+  input.reset();
+  ui.warn.style.opacity = 0;
+}
+
+function die() {
+  burst.burst(new THREE.Vector3(visual.x, visual.y, visual.z), 46, 6.5);
+  shake.add(0.95);
+  hitstop.trigger(0.12);
+  sfx.crash();
+  fsm.transition('gameover');
+}
+
+// ---------- FSM (principles.md #2) ----------
+const fsm = createFSM({
+  title: {
+    enter: () => ui.title.classList.remove('hidden'),
+    exit: () => { ui.title.classList.add('hidden'); sfx.unlock(); },
+  },
+  playing: {
+    enter: (from) => { if (from !== 'paused') resetRun(); },
+  },
+  paused: {},
+  gameover: {
+    enter: () => {
+      const isBest = scoreStore.submit(state.score);
+      ui.overTitle.textContent = isBest ? 'NEW BEST!' : 'SUNK!';
+      ui.overScore.textContent = `HOPS ${state.score} / BEST ${scoreStore.best()}`;
+      ui.best.textContent = `BEST ${scoreStore.best()}`;
+      ui.over.classList.remove('hidden');
+    },
+    exit: () => ui.over.classList.add('hidden'),
+  },
+}, 'title');
+
+document.getElementById('startBtn').addEventListener('click', () => fsm.transition('playing'));
+document.getElementById('retryBtn').addEventListener('click', () => fsm.transition('playing')); // principles.md #5
+document.getElementById('muteBtn').addEventListener('click', (e) => {
+  sfx.setMuted(!sfx.isMuted());
+  e.target.textContent = sfx.isMuted() ? '🔇' : '🔊';
+});
+
+// ---------- 更新ロジック ----------
+function updatePlaying(dt) {
+  state.time += dt;
+
+  for (const fired of events.fire(state.time)) {
+    if (fired.name === 'geyser-mode') {
+      state.geyserMode = true;
+      scene.fog.color.copy(fogGeyser);
+      scene.background.copy(fogGeyser);
+      sfx.rise();
+    }
+  }
+
+  const pressed = input.consumePressed();
+  if (pressed.has('pause')) { fsm.transition('paused'); return; }
+  const jump = pressed.has('action') || pressed.has('up') || pressed.has('down')
+    || pressed.has('left') || pressed.has('right');
+
+  if (jump && !state.hopping) {
+    state.hopping = true;
+    state.hopStart = state.time;
+    sfx.click();
+  }
+
+  if (state.hopping) {
+    const t = (state.time - state.hopStart) / HOP_DURATION;
+    if (t >= 1) {
+      state.hopping = false;
+      state.index += 1;
+      state.landedAt = state.time;
+      state.score = state.index;
+      sfx.ping(0.05);
+    }
+  } else {
+    const win = sinkRamp.at(state.time);
+    if (state.time - state.landedAt > win) { die(); return; }
+  }
+
+  if (state.geyserMode) {
+    state.geyserTimer -= dt;
+    if (state.geyserTimer <= 0 && !state.pendingGeyser) {
+      state.pendingGeyser = { index: state.index, triggerAt: state.time + GEYSER_WARN };
+      state.geyserTimer = geyserIntervalRamp.at(state.time);
+      sfx.rise(0.05);
+    }
+    if (state.pendingGeyser && state.time >= state.pendingGeyser.triggerAt) {
+      if (!state.hopping && state.index === state.pendingGeyser.index) { state.pendingGeyser = null; die(); return; }
+      state.pendingGeyser = null;
+    }
+  }
+}
+
+const loop = createLoop({ // principles.md #1
+  fixedStep: 1 / 60,
+  update: (dt) => {
+    const scaled = hitstop.scale(dt);
+    if (fsm.is('playing')) updatePlaying(scaled);
+    if (fsm.is('paused') && input.consumePressed().has('pause')) fsm.transition('playing');
+    shake.update(dt);
+    burst.update(scaled);
+  },
+  render: () => {
+    // 離散状態(index)と連続描画(lerp/イージング)の分離 (principles.md #3)
+    const from = platformPos(state.index);
+    let px = from.x, py = 0.5, pz = from.z, squash = 1;
+    if (state.hopping) {
+      const t = Math.min(1, (state.time - state.hopStart) / HOP_DURATION);
+      const to = platformPos(state.index + 1);
+      const e = easeOutCubic(t);
+      px = lerp(from.x, to.x, e);
+      pz = lerp(from.z, to.z, e);
+      py = 0.5 + Math.sin(t * Math.PI) * 1.15;
+      squash = 1 - Math.sin(t * Math.PI) * 0.18;
+    } else {
+      const progress = Math.min(1, (state.time - state.landedAt) / sinkRamp.at(state.time));
+      py = 0.5 - progress * 0.35;
+      squash = 1 + progress * 0.06;
+    }
+    visual.x = px; visual.y = py; visual.z = pz;
+    player.position.set(px, py, pz);
+    player.scale.set(1 / squash, squash, 1 / squash);
+    player.rotation.y = Math.sin(state.time * 2) * 0.08;
+
+    // カメラは三人称追従(ブリーフ: 追従三人称)
+    const camTarget = new THREE.Vector3(px * 0.5, py + 4.2, pz + 6.4);
+    camera.position.lerp(camTarget, 0.09);
+    const offset = shake.offset();
+    camera.position.x += offset.x;
+    camera.position.y += offset.y;
+    cameraLook.set(px * 0.5, py + 0.6, pz - 6);
+    camera.lookAt(cameraLook);
+
+    // 足場スロットの更新
+    const dummy = new THREE.Object3D();
+    let warnAlpha = 0;
+    for (let k = 0; k < SLOTS; k += 1) {
+      const g = state.index - BEHIND + k;
+      const p = platformPos(g);
+      let y = p.y;
+      let scale = 1;
+      let color = SAFE_COLOR;
+      if (g < state.index) {
+        y = -6; scale = 0.4; // 既に離れた足場は完全に沈める
+      } else if (g === state.index) {
+        const progress = Math.min(1, (state.time - state.landedAt) / sinkRamp.at(state.time));
+        y = p.y - progress * 2.3;
+        scale = 1 - progress * 0.42;
+        color = SAFE_COLOR.clone().lerp(DANGER_COLOR, progress);
+        if (state.pendingGeyser && state.pendingGeyser.index === g) {
+          const warnT = Math.min(1, Math.max(0,
+            1 - (state.pendingGeyser.triggerAt - state.time) / GEYSER_WARN));
+          const pulse = (Math.sin(state.time * 26) * 0.5 + 0.5) * warnT;
+          color = color.clone().lerp(FLASH_COLOR, pulse);
+          warnAlpha = Math.max(warnAlpha, warnT);
+        }
+      } else if (g === state.index + 1) {
+        color = SAFE_COLOR.clone().lerp(FLASH_COLOR, 0.15);
+      }
+      dummy.position.set(p.x, y, p.z);
+      dummy.scale.set(scale, scale, scale);
+      dummy.updateMatrix();
+      platformMesh.setMatrixAt(k, dummy.matrix);
+      platformMesh.setColorAt(k, color);
+    }
+    platformMesh.instanceMatrix.needsUpdate = true;
+    if (platformMesh.instanceColor) platformMesh.instanceColor.needsUpdate = true;
+
+    lava.material.emissiveIntensity = 1.0 + Math.sin(state.time * 1.6) * 0.25;
+    emberLight.intensity = 1.4 + Math.sin(state.time * 2.1) * 0.3;
+
+    ui.score.textContent = `HOPS ${state.score}`;
+    ui.warn.style.opacity = warnAlpha > 0.15 ? Math.min(1, warnAlpha) : 0;
+    ui.warn.textContent = '⚠ GEYSER';
+
+    renderer.render(scene, camera);
+  },
+});
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => loop.tick(clock.getDelta()));
+
+// 検証パイプライン用フック(scripts/verify-game.mjs が参照)
+window.__GAME__ = { fsm, state, rendererInfo: () => renderer.info.render };
+</script>
+</body>
+</html>
