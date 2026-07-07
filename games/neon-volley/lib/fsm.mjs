@@ -6,7 +6,7 @@ export function createFSM(states, initial) {
   let current = initial;
   states[current].enter?.(null);
 
-  return {
+  const fsm = {
     current: () => current,
     is: (name) => current === name,
     transition(to) {
@@ -21,4 +21,8 @@ export function createFSM(states, initial) {
       states[current].update?.(dt);
     },
   };
+  // 契約 v2 (docs/contracts/game-hook.d.ts): 読み取り専用の state プロパティを必須公開。
+  // 外部(verify N3)が関数呼び出しなしで現在状態を読めることを保証する。
+  Object.defineProperty(fsm, 'state', { get: () => current, enumerable: true });
+  return fsm;
 }

@@ -32,7 +32,7 @@
     letter-spacing: 0.08em; pointer-events: none; color: var(--danger); text-shadow: 0 0 10px var(--danger); }
 </style>
 <script type="importmap">
-  { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+  { "imports": { "three": "https://unpkg.com/three@0.185.0/build/three.module.js" } }
 </script>
 </head>
 <body>
@@ -68,6 +68,8 @@ import { createScoreStore } from './lib/score.mjs';
 import { createRamp, createEventSchedule } from './lib/difficulty.mjs';
 import { createSfx } from './lib/sfx.mjs';
 import { createShake, createHitstop, createBurstPool, lerp } from './lib/juice.mjs';
+import { createGameHook } from './lib/game-hook.mjs';
+import { createRendererInfo } from './lib/render-info.mjs';
 
 // ---------- 定数 ----------
 const GAME_ID = 'neon-volley';
@@ -357,6 +359,13 @@ const fsm = createFSM({
 
 document.getElementById('startBtn').addEventListener('click', () => fsm.transition('playing'));
 document.getElementById('retryBtn').addEventListener('click', () => fsm.transition('playing')); // principles.md #5
+// 実導線: キーボードでも開始/リスタートできること(verify N1、phase1 恒久対策)
+window.addEventListener('keydown', (e) => {
+  if ((e.code === 'Space' || e.code === 'Enter') && (fsm.is('title') || fsm.is('gameover'))) {
+    e.preventDefault();
+    fsm.transition('playing');
+  }
+});
 document.getElementById('resumeBtn').addEventListener('click', () => fsm.transition('playing'));
 document.getElementById('muteBtn').addEventListener('click', (e) => {
   sfx.setMuted(!sfx.isMuted());
@@ -514,7 +523,12 @@ const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => loop.tick(clock.getDelta()));
 
 // 検証パイプライン用フック(scripts/verify-game.mjs が参照)
-window.__GAME__ = { fsm, state, rendererInfo: () => renderer.info.render };
+window.__GAME__ = createGameHook({
+  fsm,
+  state,
+  rendererInfo: createRendererInfo(renderer),
+  progressFields: ['score', 'time'],
+});
 </script>
 </body>
 </html>
