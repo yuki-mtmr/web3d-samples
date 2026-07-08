@@ -69,9 +69,20 @@
 <script type="module">
 import * as THREE from 'three';
 import { initRenderPreset } from './lib/render-preset.mjs';
+import { createFSM } from './lib/fsm.mjs';
+import { createGameHook } from './lib/game-hook.mjs';
+import { createRendererInfo } from './lib/render-info.mjs';
+import { createScoreStore } from './lib/score.mjs';
+import { bindKeyboard } from './lib/input-bindings.mjs';
+import { createInputBuffer } from './lib/input.mjs';
+// bloom は emissive 多用テーマ(ネオン発光: ヘビ頭部/外周枠/実)で必須(verify N9)
+import { createBloomComposer } from './lib/postfx.mjs';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+// bloom(EffectComposer)使用時は info を手動リセットに切り替え、フレーム全パスの
+// draw call / 三角形を累積して A8/A9 が実測できるようにする(render-preset.mjs 参照)
+renderer.info.autoReset = false;
 renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 
@@ -108,6 +119,10 @@ const renderPreset = await initRenderPreset(renderer, scene);
 const camera = new THREE.PerspectiveCamera(46, innerWidth / innerHeight, 0.1, 100);
 camera.position.set(0, 16.5, 10.5);
 camera.lookAt(0, 0, -0.6);
+
+// ネオンテーマの発光感は bloom で担保(threshold は高め: 盤面全体が薄く光って見えないよう
+// emissive 強めの箇所のみに反応させる)
+const bloom = createBloomComposer(renderer, scene, camera, { strength: 0.65, threshold: 0.82, radius: 0.35 });
 
 scene.add(new THREE.AmbientLight(0x88ffcc, 0.55));
 const key = new THREE.DirectionalLight(0xffffff, 1.1);
@@ -333,18 +348,18 @@ function crashSfx() {
 }
 
 /* ---------- ゲーム状態 ---------- */
-let playing = false;
+// 検証フック契約 v2(docs/contracts/game-hook.d.ts): score は progressFields で公開する
+// 進行フィールドのため state オブジェクトに保持する。盤面内部変数は従来どおりモジュール変数。
+const state = { score: 0 };
 let body = [];              // {r, c} 先頭 = 頭
 let dir = { r: 0, c: 1 };   // 現在の進行方向
 let nextDir = { r: 0, c: 1 };
 let stepInterval = 0.22, stepT = 0;
-let eaten = 0;
 
 const scoreEl = document.getElementById('score');
 const bestEl = document.getElementById('best');
-const BEST_KEY = 'snake3d-best';
-let best = +(localStorage.getItem(BEST_KEY) || 0);
-bestEl.textContent = best ? `BEST ${best}` : '';
+const scoreStore = createScoreStore('snake3d'); // key: snake3d-best(旧実装と同一キーを維持)
+bestEl.textContent = scoreStore.best() ? `BEST ${scoreStore.best()}` : '';
 
 function placeFruit() {
   const free = [];
@@ -360,41 +375,27 @@ function reset() {
   dir = { r: 0, c: 1 };
   nextDir = { r: 0, c: 1 };
   stepInterval = 0.22; stepT = 0;
-  eaten = 0;
+  state.score = 0;
   scoreEl.textContent = '0';
   placeFruit();
   syncMeshes(body);
-}
-
-function gameOver() {
-  playing = false;
-  crashSfx();
-  document.getElementById('result').textContent = eaten;
-  const nb = document.getElementById('newBest');
-  if (eaten > best) {
-    best = eaten;
-    localStorage.setItem(BEST_KEY, best);
-    nb.textContent = '✦ NEW BEST ✦';
-  } else nb.textContent = '';
-  bestEl.textContent = `BEST ${best}`;
-  setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 500);
 }
 
 function step() {
   dir = nextDir;
   const head = { r: body[0].r + dir.r, c: body[0].c + dir.c };
   // 壁
-  if (head.r < 0 || head.r >= N || head.c < 0 || head.c >= N) return gameOver();
+  if (head.r < 0 || head.r >= N || head.c < 0 || head.c >= N) { fsm.transition('gameover'); return; }
   // 自分（しっぽは次のステップで空くので、食べない場合のみ末尾を除外して判定）
   const willEat = head.r === fruitCell.r && head.c === fruitCell.c;
   const checkBody = willEat ? body : body.slice(0, -1);
-  if (checkBody.some(s => s.r === head.r && s.c === head.c)) return gameOver();
+  if (checkBody.some(s => s.r === head.r && s.c === head.c)) { fsm.transition('gameover'); return; }
 
   body.unshift(head);
   if (willEat) {
-    eaten++;
-    scoreEl.textContent = eaten;
-    stepInterval = Math.max(0.09, 0.22 - eaten * 0.006);
+    state.score++;
+    scoreEl.textContent = state.score;
+    stepInterval = Math.max(0.09, 0.22 - state.score * 0.006);
     eatSfx();
     placeFruit();
   } else {
@@ -434,20 +435,49 @@ addEventListener('pointerup', (e) => {
   else turn(dy > 0 ? 1 : -1, 0);
 });
 
-document.getElementById('startBtn').addEventListener('click', () => {
-  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
-  document.getElementById('titleOverlay').classList.add('hidden');
-  document.getElementById('overOverlay').classList.add('hidden');
-  reset();
-  playing = true;
-  renderPreset.onPlaying();
-});
-document.getElementById('retryBtn').addEventListener('click', () => {
-  document.getElementById('overOverlay').classList.add('hidden');
-  reset();
-  playing = true;
-  renderPreset.onPlaying();
-});
+// 実導線: Space/Enter でも開始/リスタートできる(verify N1)。入力バッファ経由で結線し、
+// クリック専用の開始導線を恒久的に避ける(phase1 で全ゲーム共通欠陥と特定済み)。
+const input = createInputBuffer();
+bindKeyboard(input, { ' ': 'action', Enter: 'action' });
+
+// ---------- FSM (docs/contracts/game-hook.d.ts 準拠) ----------
+const fsm = createFSM({
+  title: {
+    exit: () => {
+      if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+      document.getElementById('titleOverlay').classList.add('hidden');
+    },
+  },
+  playing: {
+    enter: () => {
+      document.getElementById('overOverlay').classList.add('hidden');
+      reset();
+      renderPreset.onPlaying();
+    },
+  },
+  gameover: {
+    enter: () => {
+      crashSfx();
+      document.getElementById('result').textContent = state.score;
+      submitScore();
+      setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 500);
+    },
+    exit: () => document.getElementById('overOverlay').classList.add('hidden'),
+  },
+}, 'title');
+
+// gameover の間は毎フレーム best 永続化を試みる(idempotent)。verify A11 は fsm が既に
+// gameover の状態で state.score を直接書き換えてから transition('gameover') を呼ぶことがあり、
+// その場合 lib/fsm.mjs の transition は同一状態への遷移を no-op にするため enter() が再発火しない。
+// ループ側でも submitScore() することで、その経路でも A12(best 永続化)を成立させる。
+function submitScore() {
+  const isBest = scoreStore.submit(state.score);
+  if (isBest) document.getElementById('newBest').textContent = '✦ NEW BEST ✦';
+  bestEl.textContent = `BEST ${scoreStore.best()}`;
+}
+
+document.getElementById('startBtn').addEventListener('click', () => fsm.transition('playing'));
+document.getElementById('retryBtn').addEventListener('click', () => fsm.transition('playing'));
 
 /* ---------- メインループ ---------- */
 const clock = new THREE.Clock();
@@ -456,20 +486,30 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   const t = clock.elapsedTime;
 
-  if (playing) {
+  // 毎フレーム consume してバッファの取りこぼし/持ち越しを防ぐ(playing 中の action 押下が
+  // 後の title/gameover 復帰時に誤発火しないように)
+  const acted = input.consumePressed().has('action');
+  if (acted && (fsm.is('title') || fsm.is('gameover'))) {
+    fsm.transition('playing');
+  }
+
+  if (fsm.is('playing')) {
     stepT += dt;
     while (stepT >= stepInterval) {
       stepT -= stepInterval;
       step();
-      if (!playing) break;
+      if (!fsm.is('playing')) break;
     }
+  } else if (fsm.is('gameover')) {
+    submitScore();
   }
   // 実の浮遊
   fruit.position.y = 0.34 + Math.sin(t * 3) * 0.08;
   fruit.rotation.y += dt * 2;
   updateDust(dt, t);
 
-  renderer.render(scene, camera);
+  renderer.info.reset();
+  bloom.render();
   if (!ready) { console.log('[site] ready'); ready = true; }
 });
 
@@ -477,6 +517,15 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  bloom.resize(innerWidth, innerHeight); // N9: bloom パスの解像度追随
+});
+
+// 検証パイプライン用フック v2(docs/contracts/game-hook.d.ts、scripts/verify-game.mjs が参照)
+window.__GAME__ = createGameHook({
+  fsm,
+  state,
+  rendererInfo: createRendererInfo(renderer),
+  progressFields: ['score'],
 });
 </script>
 </body>

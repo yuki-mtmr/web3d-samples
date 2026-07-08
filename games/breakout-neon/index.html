@@ -72,9 +72,20 @@
 import * as THREE from 'three';
 import { initRenderPreset } from './lib/render-preset.mjs';
 import { createRng } from './lib/rng.mjs';
+import { createFSM } from './lib/fsm.mjs';
+import { createGameHook } from './lib/game-hook.mjs';
+import { createRendererInfo } from './lib/render-info.mjs';
+import { createScoreStore } from './lib/score.mjs';
+import { createInputBuffer } from './lib/input.mjs';
+import { bindKeyboard } from './lib/input-bindings.mjs';
+// bloom は emissive 多用テーマ(ネオン/発光系)で必須(verify N9)。
+import { createBloomComposer } from './lib/postfx.mjs';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+// bloom(EffectComposer)使用時は info を手動リセットに切り替え、フレーム全パスの
+// draw call / 三角形を累積して A8/A9 が実測できるようにする
+renderer.info.autoReset = false;
 renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 
@@ -154,6 +165,9 @@ const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 10
 camera.position.set(0, 13.5, 9);
 camera.lookAt(0, 0, -1);
 
+// ネオンテーマの発光感は bloom で担保(threshold 高め: 過発光防止しつつ emissive を持ち上げる)
+const bloom = createBloomComposer(renderer, scene, camera, { strength: 0.65, threshold: 0.8 });
+
 scene.add(new THREE.AmbientLight(0x8877cc, 1.2));
 const key = new THREE.DirectionalLight(0xffffff, 0.9);
 key.position.set(3, 10, 5);
@@ -217,7 +231,7 @@ scene.add(trailPoints);
 const trailHistory = [];
 const trailColorBase = new THREE.Color(0x8affda); // accent(brief.json 準拠)
 function updateTrail() {
-  if (playing && !ballStuck) {
+  if (fsm.is('playing') && !ballStuck) {
     trailHistory.unshift({ x: ball.position.x, y: ball.position.y, z: ball.position.z });
     if (trailHistory.length > TRAIL_LEN) trailHistory.pop();
   } else if (trailHistory.length) {
@@ -308,18 +322,19 @@ function ping(freq, vol = 0.1) {
 }
 
 /* ---------- ゲーム状態 ---------- */
-let playing = false;
-let score = 0, lives = 3, level = 1;
+// 検証フック契約 v2(docs/contracts/game-hook.d.ts): score は progressFields で公開する
+// 進行フィールドのため state オブジェクトに保持する。lives/level 等の内部変数は従来どおり。
+const state = { score: 0 };
+let lives = 3, level = 1;
 let ballSpeed = 9;
 
 const scoreEl = document.getElementById('score');
 const livesEl = document.getElementById('lives');
 const levelEl = document.getElementById('level');
-const BEST_KEY = 'breakout-neon-best';
-let best = +(localStorage.getItem(BEST_KEY) || 0);
+const scoreStore = createScoreStore('breakout-neon');
 
 function drawHud() {
-  scoreEl.textContent = score;
+  scoreEl.textContent = state.score;
   livesEl.textContent = '♥'.repeat(lives);
   levelEl.textContent = `LEVEL ${level}`;
 }
@@ -330,7 +345,7 @@ function resetBall() {
 }
 
 function reset() {
-  score = 0; lives = 3; level = 1; ballSpeed = 9;
+  state.score = 0; lives = 3; level = 1; ballSpeed = 9;
   buildBricks(level);
   resetBall();
   drawHud();
@@ -345,17 +360,10 @@ function launch() {
   ping(880, 0.12);
 }
 
+let clearedRun = false;
 function gameOver(cleared) {
-  playing = false;
-  document.getElementById('overLabel').textContent = cleared ? 'ALL LEVELS CLEAR — SCORE' : 'GAME OVER — SCORE';
-  document.getElementById('result').textContent = score;
-  const nb = document.getElementById('newBest');
-  if (score > best) {
-    best = score;
-    localStorage.setItem(BEST_KEY, best);
-    nb.textContent = '✦ NEW BEST ✦';
-  } else nb.textContent = '';
-  setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 600);
+  clearedRun = cleared;
+  fsm.transition('gameover');
 }
 
 /* ---------- 入力 ---------- */
@@ -365,24 +373,42 @@ addEventListener('pointermove', (e) => {
 });
 addEventListener('pointerdown', (e) => {
   if (e.target && e.target.closest && e.target.closest('button')) return;
-  if (playing) launch();
+  if (fsm.is('playing')) launch();
 });
-addEventListener('keydown', (e) => { if (e.code === 'Space' && playing) launch(); });
 
-document.getElementById('startBtn').addEventListener('click', () => {
-  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
-  document.getElementById('titleOverlay').classList.add('hidden');
-  document.getElementById('overOverlay').classList.add('hidden');
-  reset();
-  playing = true;
-  renderPreset.onPlaying(key);
-});
-document.getElementById('retryBtn').addEventListener('click', () => {
-  document.getElementById('overOverlay').classList.add('hidden');
-  reset();
-  playing = true;
-  renderPreset.onPlaying(key);
-});
+// 実導線: Space/Enter でも開始/再開できること(verify N1)。プレイ中は Space でボール発射。
+const input = createInputBuffer();
+bindKeyboard(input, { ' ': 'action', Enter: 'action' });
+
+// ---------- FSM (docs/contracts/game-hook.d.ts 準拠) ----------
+const fsm = createFSM({
+  title: {
+    exit: () => {
+      if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+      document.getElementById('titleOverlay').classList.add('hidden');
+    },
+  },
+  playing: {
+    enter: () => {
+      document.getElementById('overOverlay').classList.add('hidden');
+      reset();
+      renderPreset.onPlaying(key);
+    },
+  },
+  gameover: {
+    enter: () => {
+      document.getElementById('overLabel').textContent = clearedRun ? 'ALL LEVELS CLEAR — SCORE' : 'GAME OVER — SCORE';
+      document.getElementById('result').textContent = state.score;
+      const nb = document.getElementById('newBest');
+      nb.textContent = scoreStore.submit(state.score) ? '✦ NEW BEST ✦' : '';
+      setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 600);
+    },
+    exit: () => document.getElementById('overOverlay').classList.add('hidden'),
+  },
+}, 'title');
+
+document.getElementById('startBtn').addEventListener('click', () => fsm.transition('playing'));
+document.getElementById('retryBtn').addEventListener('click', () => fsm.transition('playing'));
 
 /* ---------- メインループ ---------- */
 const clock = new THREE.Clock();
@@ -390,10 +416,16 @@ let ready = false;
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.04);
 
+  const pressed = input.consumePressed();
+  if (pressed.has('action')) {
+    if (fsm.is('title') || fsm.is('gameover')) fsm.transition('playing');
+    else if (fsm.is('playing')) launch();
+  }
+
   // パドル追従（0.25 = 機敏）
   paddle.position.x += (paddleTX - paddle.position.x) * 0.25;
 
-  if (playing) {
+  if (fsm.is('playing')) {
     if (ballStuck) {
       ball.position.x = paddle.position.x;
       ball.position.z = paddle.position.z - 0.6;
@@ -431,7 +463,7 @@ renderer.setAnimationLoop(() => {
           if (Math.abs(dx) < (BRICK_W - 0.14)/2 + BALL_R && Math.abs(dz) < (BRICK_D - 0.1)/2 + BALL_R) {
             b.alive = false;
             b.mesh.visible = false;
-            score += 10 * level;
+            state.score += 10 * level;
             burst(b.mesh.position, b.mesh.material.color.getHex());
             ping(990 - b.row * 60, 0.12);
             // 反射軸: 侵入の浅い方
@@ -455,7 +487,7 @@ renderer.setAnimationLoop(() => {
       }
 
       // レベルクリア
-      if (playing && bricks.every(b => !b.alive)) {
+      if (fsm.is('playing') && bricks.every(b => !b.alive)) {
         if (level >= 3) gameOver(true);
         else {
           level++;
@@ -491,7 +523,8 @@ renderer.setAnimationLoop(() => {
 
   updateTrail();
 
-  renderer.render(scene, camera);
+  renderer.info.reset();
+  bloom.render();
   if (!ready) { console.log('[site] ready'); ready = true; }
 });
 
@@ -499,6 +532,15 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  bloom.resize(innerWidth, innerHeight); // N9: bloom パスの解像度追随
+});
+
+// 検証パイプライン用フック v2(docs/contracts/game-hook.d.ts)
+window.__GAME__ = createGameHook({
+  fsm,
+  state,
+  rendererInfo: createRendererInfo(renderer),
+  progressFields: ['score'],
 });
 </script>
 </body>

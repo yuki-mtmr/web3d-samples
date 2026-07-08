@@ -70,6 +70,12 @@
 <script type="module">
 import * as THREE from 'three';
 import { initRenderPreset } from './lib/render-preset.mjs';
+import { createFSM } from './lib/fsm.mjs';
+import { createGameHook } from './lib/game-hook.mjs';
+import { createRendererInfo } from './lib/render-info.mjs';
+import { createScoreStore } from './lib/score.mjs';
+import { createInputBuffer } from './lib/input.mjs';
+import { bindKeyboard } from './lib/input-bindings.mjs';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -257,8 +263,9 @@ function ripple(x, z, big = false) {
 }
 
 /* ---------- ゲーム状態 ---------- */
-let playing = false;
-let score = 0;
+// 検証フック契約 v2(docs/contracts/game-hook.d.ts): score は progressFields で公開する
+// 進行フィールドのため state オブジェクトに保持する。poiHP 等の内部変数は従来どおり。
+const state = { score: 0 };
 let poiHP = 5;
 let dipping = false;   // 押している間 true
 let poiY = 0.55;
@@ -266,9 +273,8 @@ let poiY = 0.55;
 const scoreEl = document.getElementById('score');
 const hpEl = document.getElementById('poiHp');
 const bestEl = document.getElementById('best');
-const BEST_KEY = 'kingyo-best';
-let best = +(localStorage.getItem(BEST_KEY) || 0);
-bestEl.textContent = best ? `これまでの最高 ${best} 匹` : '';
+const scoreStore = createScoreStore('kingyo');
+bestEl.textContent = scoreStore.best() ? `これまでの最高 ${scoreStore.best()} 匹` : '';
 
 function drawHP() {
   hpEl.textContent = '紙 ' + '●'.repeat(poiHP) + '○'.repeat(Math.max(0, 5 - poiHP));
@@ -276,7 +282,7 @@ function drawHP() {
 }
 
 function reset() {
-  score = 0; poiHP = 5; dipping = false;
+  state.score = 0; poiHP = 5; dipping = false;
   scoreEl.textContent = '0';
   drawHP();
   for (const f of fishes) {
@@ -293,16 +299,7 @@ function reset() {
 }
 
 function gameOver() {
-  playing = false;
-  document.getElementById('result').textContent = score;
-  const nb = document.getElementById('newBest');
-  if (score > best) {
-    best = score;
-    localStorage.setItem(BEST_KEY, best);
-    nb.textContent = '✦ 屋台の主人もびっくり ✦';
-  } else nb.textContent = '';
-  bestEl.textContent = `これまでの最高 ${best} 匹`;
-  setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 600);
+  fsm.transition('gameover');
 }
 
 /* ---------- 入力 ---------- */
@@ -324,13 +321,13 @@ addEventListener('pointermove', (e) => {
 });
 addEventListener('pointerdown', (e) => {
   if (e.target && e.target.closest && e.target.closest('button')) return;
-  if (!playing || dipping) return;
+  if (!fsm.is('playing') || dipping) return;
   dipping = true;
   plop(260, 0.18);
   ripple(poi.position.x, poi.position.z);
 });
 addEventListener('pointerup', () => {
-  if (!playing || !dipping) return;
+  if (!fsm.is('playing') || !dipping) return;
   dipping = false;
   // すくい上げ判定
   let got = 0;
@@ -345,8 +342,8 @@ addEventListener('pointerup', () => {
     }
   }
   if (got > 0) {
-    score += got;
-    scoreEl.textContent = score;
+    state.score += got;
+    scoreEl.textContent = state.score;
     chime();
   } else {
     plop(180, 0.1);
@@ -361,19 +358,35 @@ addEventListener('pointerup', () => {
   ripple(poi.position.x, poi.position.z, true);
 });
 
-document.getElementById('startBtn').addEventListener('click', () => {
-  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
-  document.getElementById('titleOverlay').classList.add('hidden');
-  reset();
-  playing = true;
-  renderPreset.onPlaying();
-});
-document.getElementById('retryBtn').addEventListener('click', () => {
-  document.getElementById('overOverlay').classList.add('hidden');
-  reset();
-  playing = true;
-  renderPreset.onPlaying();
-});
+// ---------- FSM (docs/contracts/game-hook.d.ts 準拠) ----------
+const fsm = createFSM({
+  title: {
+    exit: () => { document.getElementById('titleOverlay').classList.add('hidden'); if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); },
+  },
+  playing: {
+    enter: () => { reset(); renderPreset.onPlaying(); },
+  },
+  gameover: {
+    enter: () => {
+      document.getElementById('result').textContent = state.score;
+      const nb = document.getElementById('newBest');
+      if (scoreStore.submit(state.score)) {
+        nb.textContent = '✦ 屋台の主人もびっくり ✦';
+      } else nb.textContent = '';
+      bestEl.textContent = `これまでの最高 ${scoreStore.best()} 匹`;
+      setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 600);
+    },
+    exit: () => document.getElementById('overOverlay').classList.add('hidden'),
+  },
+}, 'title');
+
+document.getElementById('startBtn').addEventListener('click', () => fsm.transition('playing'));
+document.getElementById('retryBtn').addEventListener('click', () => fsm.transition('playing'));
+
+// 実導線: キーボードでも開始/リスタートできること(verify N1)。
+// lib/input-bindings.mjs(bindKeyboard)で InputBuffer に結線し、fixed 相当のチェックで消費する。
+const startInput = createInputBuffer();
+bindKeyboard(startInput, { ' ': 'start', Enter: 'start' });
 
 /* ---------- メインループ ---------- */
 const clock = new THREE.Clock();
@@ -381,6 +394,10 @@ let ready = false;
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   const t = clock.elapsedTime;
+
+  if (startInput.consumePressed().has('start') && (fsm.is('title') || fsm.is('gameover'))) {
+    fsm.transition('playing');
+  }
 
   // ポイ追従（0.2 = きびきび）と上下
   poi.position.x += (poiTX - poi.position.x) * 0.2;
@@ -458,6 +475,14 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+});
+
+// 検証パイプライン用フック v2(docs/contracts/game-hook.d.ts、scripts/verify-game.mjs が参照)
+window.__GAME__ = createGameHook({
+  fsm,
+  state,
+  rendererInfo: createRendererInfo(renderer),
+  progressFields: ['score'],
 });
 </script>
 </body>

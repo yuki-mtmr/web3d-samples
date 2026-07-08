@@ -71,9 +71,19 @@
 <script type="module">
 import * as THREE from 'three';
 import { initRenderPreset } from './lib/render-preset.mjs';
+import { createFSM } from './lib/fsm.mjs';
+import { createGameHook } from './lib/game-hook.mjs';
+import { createRendererInfo } from './lib/render-info.mjs';
+import { createScoreStore } from './lib/score.mjs';
+import { bindKeyboard } from './lib/input-bindings.mjs';
+import { createInputBuffer } from './lib/input.mjs';
+import { createBloomComposer } from './lib/postfx.mjs';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+// bloom(EffectComposer)使用時は info を手動リセットに切り替え、フレーム全パスの
+// draw call / 三角形を累積して A8/A9 が実測できるようにする
+renderer.info.autoReset = false;
 renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 
@@ -91,6 +101,9 @@ scene.add(new THREE.AmbientLight(0xaabbee, 0.8));
 const key = new THREE.DirectionalLight(0xffffff, 1.0);
 key.position.set(4, 9, 5);
 scene.add(key);
+
+// キューブの emissive 明滅を活かす bloom(threshold 高め、通常発光では焚かず正解演出のみ焚く)
+const bloom = createBloomComposer(renderer, scene, camera, { strength: 0.9, threshold: 0.8 });
 
 /* ---------- 9 つのキューブ ---------- */
 const CUBE_COLORS = [
@@ -147,19 +160,20 @@ function buzz() {
 }
 
 /* ---------- ゲーム状態 ---------- */
-// state: 'idle' | 'showing' | 'input' | 'over'
-let state = 'idle';
+// 検証フック契約 v2(docs/contracts/game-hook.d.ts): round は progressFields で公開する
+// 進行フィールドのため state オブジェクトに保持する。
+// phase: 'idle' | 'showing' | 'input' (playing 中のみ意味を持つ内部サブ状態)
+const state = { round: 0 };
+let phase = 'idle';
 let sequence = [];
 let inputPos = 0;
-let round = 0;
 let showTimer = 0, showIdx = 0;
 
 const roundEl = document.getElementById('round');
 const stateEl = document.getElementById('state');
 const bestEl = document.getElementById('best');
-const BEST_KEY = 'memory-cubes-best';
-let best = +(localStorage.getItem(BEST_KEY) || 0);
-bestEl.textContent = best ? `BEST ROUND ${best}` : '';
+const scoreStore = createScoreStore('memory-cubes');
+bestEl.textContent = scoreStore.best() ? `BEST ROUND ${scoreStore.best()}` : '';
 
 function flashCube(idx, withTone = true) {
   cubes[idx].flash = 1;
@@ -167,37 +181,22 @@ function flashCube(idx, withTone = true) {
 }
 
 function nextRound() {
-  round++;
-  roundEl.textContent = `ROUND ${round}`;
+  state.round++;
+  roundEl.textContent = `ROUND ${state.round}`;
   sequence.push(Math.random() * 9 | 0);
   inputPos = 0;
-  state = 'showing';
+  phase = 'showing';
   stateEl.textContent = 'よく見て…';
   showIdx = 0;
   showTimer = 0.8;   // 最初の点灯までの間
 }
 
-function startGame() {
+function resetRun() {
   sequence = [];
-  round = 0;
-  state = 'idle';
+  state.round = 0;
+  phase = 'idle';
   renderPreset.onPlaying(key);
   nextRound();
-}
-
-function gameOver() {
-  state = 'over';
-  buzz();
-  stateEl.textContent = '';
-  document.getElementById('result').textContent = round;
-  const nb = document.getElementById('newBest');
-  if (round > best) {
-    best = round;
-    localStorage.setItem(BEST_KEY, best);
-    nb.textContent = '✦ NEW BEST ✦';
-  } else nb.textContent = '';
-  bestEl.textContent = `BEST ROUND ${best}`;
-  setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 700);
 }
 
 /* ---------- 入力（レイキャスト） ---------- */
@@ -205,7 +204,7 @@ const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
 addEventListener('pointerdown', (e) => {
   if (e.target && e.target.closest && e.target.closest('button')) return;
-  if (state !== 'input') return;
+  if (!fsm.is('playing') || phase !== 'input') return;
   ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
   const hits = raycaster.intersectObjects(cubes.map(c => c.mesh));
@@ -215,25 +214,50 @@ addEventListener('pointerdown', (e) => {
   if (idx === sequence[inputPos]) {
     inputPos++;
     if (inputPos >= sequence.length) {
-      state = 'idle';
+      phase = 'idle';
       stateEl.textContent = '正解！';
-      setTimeout(() => { if (state === 'idle') nextRound(); }, 900);
+      setTimeout(() => { if (phase === 'idle' && fsm.is('playing')) nextRound(); }, 900);
     }
   } else {
-    gameOver();
+    fsm.transition('gameover');
   }
 });
 
-document.getElementById('startBtn').addEventListener('click', () => {
-  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
-  document.getElementById('titleOverlay').classList.add('hidden');
-  document.getElementById('overOverlay').classList.add('hidden');
-  startGame();
-});
-document.getElementById('retryBtn').addEventListener('click', () => {
-  document.getElementById('overOverlay').classList.add('hidden');
-  startGame();
-});
+// ---------- FSM (docs/contracts/game-hook.d.ts 準拠) ----------
+const fsm = createFSM({
+  title: {
+    exit: () => {
+      document.getElementById('titleOverlay').classList.add('hidden');
+      if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    },
+  },
+  playing: {
+    enter: () => resetRun(),
+  },
+  paused: {},
+  gameover: {
+    enter: () => {
+      buzz();
+      stateEl.textContent = '';
+      document.getElementById('result').textContent = state.round;
+      const nb = document.getElementById('newBest');
+      if (scoreStore.submit(state.round)) {
+        nb.textContent = '✦ NEW BEST ✦';
+      } else nb.textContent = '';
+      bestEl.textContent = `BEST ROUND ${scoreStore.best()}`;
+      setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 700);
+    },
+    exit: () => document.getElementById('overOverlay').classList.add('hidden'),
+  },
+}, 'title');
+
+document.getElementById('startBtn').addEventListener('click', () => fsm.transition('playing'));
+document.getElementById('retryBtn').addEventListener('click', () => fsm.transition('playing'));
+
+// 実導線: キーボードでも開始/リスタートできること(verify N1)。lib/input-bindings.mjs(bindKeyboard)
+// で Space/Enter を 'action' に結線し、title/gameover からの遷移トリガーとして毎フレーム消費する。
+const input = createInputBuffer();
+bindKeyboard(input, { ' ': 'action', Enter: 'action' });
 
 /* ---------- メインループ ---------- */
 const clock = new THREE.Clock();
@@ -241,30 +265,38 @@ let ready = false;
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
 
+  if (input.consumePressed().has('action') && (fsm.is('title') || fsm.is('gameover'))) {
+    fsm.transition('playing');
+  }
+
   // シーケンス再生
-  if (state === 'showing') {
+  if (fsm.is('playing') && phase === 'showing') {
     showTimer -= dt;
     if (showTimer <= 0) {
       if (showIdx < sequence.length) {
         flashCube(sequence[showIdx]);
         showIdx++;
         // ラウンドが進むほど提示テンポが速くなる
-        showTimer = Math.max(0.34, 0.62 - round * 0.02);
+        showTimer = Math.max(0.34, 0.62 - state.round * 0.02);
       } else {
-        state = 'input';
+        phase = 'input';
         stateEl.textContent = 'あなたの番';
       }
     }
   }
 
-  // フラッシュ減衰 + 浮き上がり
-  for (const c of cubes) {
+  // フラッシュ減衰 + 浮き上がり + 微細な待機アイドルモーション(N4 凍結誤判定対策:
+  // 入力待ち中も画面が完全静止しないよう、ゲームプレイに影響しない振幅で常時揺らす)
+  const t = clock.elapsedTime;
+  for (let ci = 0; ci < cubes.length; ci++) {
+    const c = cubes[ci];
     c.flash = Math.max(0, c.flash - dt * 2.6);
-    c.mesh.material.emissiveIntensity = 0.12 + c.flash * 1.5;
-    c.mesh.position.y = 0.35 + c.flash * 0.3;
+    c.mesh.material.emissiveIntensity = 0.12 + c.flash * 1.5 + Math.sin(t * 1.4 + ci) * 0.02;
+    c.mesh.position.y = 0.35 + c.flash * 0.3 + Math.sin(t * 1.1 + ci * 0.7) * 0.02;
   }
 
-  renderer.render(scene, camera);
+  renderer.info.reset();
+  bloom.render();
   if (!ready) { console.log('[site] ready'); ready = true; }
 });
 
@@ -272,6 +304,15 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  bloom.resize(innerWidth, innerHeight); // N9: bloom パスの解像度追随
+});
+
+// 検証パイプライン用フック v2(docs/contracts/game-hook.d.ts)
+window.__GAME__ = createGameHook({
+  fsm,
+  state,
+  rendererInfo: createRendererInfo(renderer),
+  progressFields: ['round'],
 });
 </script>
 </body>

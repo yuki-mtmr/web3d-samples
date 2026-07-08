@@ -68,6 +68,10 @@
 import * as THREE from 'three';
 import { initRenderPreset } from './lib/render-preset.mjs';
 import { createRng } from './lib/rng.mjs';
+import { createFSM } from './lib/fsm.mjs';
+import { createGameHook } from './lib/game-hook.mjs';
+import { createRendererInfo } from './lib/render-info.mjs';
+import { createScoreStore } from './lib/score.mjs';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -234,15 +238,17 @@ let debris = [];       // 切り落とし片 { mesh, vy, vr }
 let moving = null;     // 動いているブロック
 let dir = 1, axis = 'x', speed = 4.2;
 let level = 0;
-let playing = false;
 let camY = 0;
 let hue0 = Math.random() * 360;
 
+// 検証フック契約 v2(docs/contracts/game-hook.d.ts): score は progressFields で公開する
+// 進行フィールドのため state オブジェクトに保持する(内部の level と同期させる)。
+const state = { score: 0 };
+
 const scoreEl = document.getElementById('score');
 const bestEl = document.getElementById('best');
-const BEST_KEY = 'stack-tower-best';
-let best = +(localStorage.getItem(BEST_KEY) || 0);
-bestEl.textContent = best ? `BEST ${best}` : '';
+const scoreStore = createScoreStore('stack-tower');
+bestEl.textContent = scoreStore.best() ? `BEST ${scoreStore.best()}` : '';
 
 function blockColor(i) {
   return new THREE.Color(`hsl(${(hue0 + i * 9) % 360}, 62%, ${52 + Math.sin(i * 0.4) * 8}%)`);
@@ -271,6 +277,7 @@ function reset() {
   if (moving) disposeMesh(moving.mesh);
   stack = []; debris = []; moving = null;
   level = 0; speed = 4.2; camY = 0;
+  state.score = 0;
   hue0 = Math.random() * 360;
   const base = makeBlock(BASE_SIZE, BASE_SIZE, 0, 0, 0, 0);
   stack.push({ mesh: base, w: BASE_SIZE, d: BASE_SIZE });
@@ -291,7 +298,7 @@ function spawnMoving() {
 }
 
 function place() {
-  if (!playing || !moving) return;
+  if (!fsm.is('playing') || !moving) return;
   const top = stack[stack.length - 1];
   const m = moving.mesh;
   const delta = axis === 'x'
@@ -343,24 +350,15 @@ function place() {
   stack.push({ mesh: m, w: newW, d: newD });
   moving = null;
   level++;
+  state.score = level;
   speed = Math.min(9, 4.2 + level * 0.16);
   scoreEl.textContent = level;
   spawnMoving();
 }
 
 function gameOver() {
-  playing = false;
   moving = null;
-  beep(140, 0.4, 'sawtooth', 0.2);
-  document.getElementById('result').textContent = level;
-  const nb = document.getElementById('newBest');
-  if (level > best) {
-    best = level;
-    localStorage.setItem(BEST_KEY, best);
-    nb.textContent = '✦ NEW BEST ✦';
-  } else nb.textContent = '';
-  bestEl.textContent = `BEST ${best}`;
-  setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 550);
+  fsm.transition('gameover');
 }
 
 /* ---------- 入力 ---------- */
@@ -369,21 +367,44 @@ function onAction(e) {
   place();
 }
 addEventListener('pointerdown', onAction);
-addEventListener('keydown', (e) => { if (e.code === 'Space') place(); });
 
-document.getElementById('startBtn').addEventListener('click', () => {
-  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
-  document.getElementById('titleOverlay').classList.add('hidden');
-  reset();
-  playing = true;
-  renderPreset.onPlaying();
+// ---------- FSM (docs/contracts/game-hook.d.ts 準拠) ----------
+const fsm = createFSM({
+  title: {
+    exit: () => {
+      document.getElementById('titleOverlay').classList.add('hidden');
+      if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    },
+  },
+  playing: {
+    enter: () => { reset(); renderPreset.onPlaying(); },
+  },
+  gameover: {
+    enter: () => {
+      beep(140, 0.4, 'sawtooth', 0.2);
+      document.getElementById('result').textContent = level;
+      const nb = document.getElementById('newBest');
+      if (scoreStore.submit(level)) {
+        nb.textContent = '✦ NEW BEST ✦';
+      } else nb.textContent = '';
+      bestEl.textContent = `BEST ${scoreStore.best()}`;
+      setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 550);
+    },
+    exit: () => document.getElementById('overOverlay').classList.add('hidden'),
+  },
+}, 'title');
+
+// 実導線: キーボードでも操作/開始/リスタートできること(verify N1/N2)
+addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && fsm.is('playing')) { e.preventDefault(); place(); return; }
+  if ((e.code === 'Space' || e.code === 'Enter') && (fsm.is('title') || fsm.is('gameover'))) {
+    e.preventDefault();
+    fsm.transition('playing');
+  }
 });
-document.getElementById('retryBtn').addEventListener('click', () => {
-  document.getElementById('overOverlay').classList.add('hidden');
-  reset();
-  playing = true;
-  renderPreset.onPlaying();
-});
+
+document.getElementById('startBtn').addEventListener('click', () => fsm.transition('playing'));
+document.getElementById('retryBtn').addEventListener('click', () => fsm.transition('playing'));
 
 /* ---------- メインループ ---------- */
 const clock = new THREE.Clock();
@@ -391,7 +412,7 @@ let ready = false;
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
 
-  if (playing && moving) {
+  if (fsm.is('playing') && moving) {
     const m = moving.mesh;
     const p = axis === 'x' ? 'x' : 'z';
     m.position[p] += dir * speed * dt;
@@ -425,6 +446,14 @@ renderer.setAnimationLoop(() => {
 addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
   setCamera(camY);
+});
+
+// 検証パイプライン用フック v2(docs/contracts/game-hook.d.ts)
+window.__GAME__ = createGameHook({
+  fsm,
+  state,
+  rendererInfo: createRendererInfo(renderer),
+  progressFields: ['score'],
 });
 </script>
 </body>

@@ -70,9 +70,18 @@ import * as THREE from 'three';
 import { initRenderPreset } from './lib/render-preset.mjs';
 import { createRng } from './lib/rng.mjs';
 import { createNoiseField } from './lib/procedural-texture.mjs';
+import { createFSM } from './lib/fsm.mjs';
+import { createGameHook } from './lib/game-hook.mjs';
+import { createRendererInfo } from './lib/render-info.mjs';
+import { createScoreStore } from './lib/score.mjs';
+// bloom は emissive 多用テーマ(提灯灯り/発光系)で必須(verify N9)。
+import { createBloomComposer } from './lib/postfx.mjs';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+// bloom(EffectComposer)使用時は info を手動リセットに切り替え、フレーム全パスの
+// draw call / 三角形を累積して A8/A9 が実測できるようにする
+renderer.info.autoReset = false;
 renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 
@@ -229,6 +238,9 @@ scene.add(new THREE.AmbientLight(0x352a50, 1.2));
 const pl = new THREE.PointLight(0xff9a4d, 30, 30, 1.7);
 scene.add(pl);
 
+// 提灯/火の玉の発光感は bloom で担保(threshold 高め = 強発光のみに効かせ、地面等を汚さない)
+const bloom = createBloomComposer(renderer, scene, camera, { strength: 0.7, threshold: 0.8, radius: 0.4 });
+
 /* ---------- 効果音 ---------- */
 let actx = null;
 function beep(freq, dur = 0.08, type = 'sine', vol = 0.16) {
@@ -376,15 +388,16 @@ const sideLanterns = [];
 }
 
 /* ---------- ゲーム状態 ---------- */
-let playing = false;
+// 検証フック契約 v2(docs/contracts/game-hook.d.ts): score は progressFields で公開する
+// 進行フィールドのため state オブジェクトに保持する。speed/dist 等の内部変数は従来どおり。
+const state = { score: 0 };
 let speed = 10, dist = 0, nextGateZ = -24;
 let px = 0, py = 0, tx = 0, ty = 0;
 
 const scoreEl = document.getElementById('score');
 const bestEl = document.getElementById('best');
-const BEST_KEY = 'lantern-run-best';
-let best = +(localStorage.getItem(BEST_KEY) || 0);
-bestEl.textContent = best ? `最長 ${best} 間` : '';
+const scoreStore = createScoreStore('lantern-run');
+bestEl.textContent = scoreStore.best() ? `最長 ${scoreStore.best()} 間` : '';
 
 function reset() {
   for (const g of gates) removeGate(g);
@@ -395,22 +408,12 @@ function reset() {
   for (let i = 0; i < TRAIL_N; i++) {
     trailPos[i*3] = 0; trailPos[i*3+1] = 0; trailPos[i*3+2] = 2 + i * 0.2;
   }
+  state.score = 0;
   scoreEl.textContent = '0';
 }
 
 function gameOver() {
-  playing = false;
-  beep(120, 0.5, 'sawtooth', 0.22);
-  const score = Math.floor(dist);
-  document.getElementById('result').textContent = score;
-  const nb = document.getElementById('newBest');
-  if (score > best) {
-    best = score;
-    localStorage.setItem(BEST_KEY, best);
-    nb.textContent = '✦ 最長記録 ✦';
-  } else nb.textContent = '';
-  bestEl.textContent = `最長 ${best} 間`;
-  setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 400);
+  fsm.transition('gameover');
 }
 
 /* ---------- 入力（ポインタ追従 0.16 = 機敏） ---------- */
@@ -419,18 +422,37 @@ addEventListener('pointermove', (e) => {
   ty = -((e.clientY / innerHeight) * 2 - 1) * (FIELD_H / 2);
 });
 
-document.getElementById('startBtn').addEventListener('click', () => {
-  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
-  document.getElementById('titleOverlay').classList.add('hidden');
-  reset();
-  playing = true;
-  renderPreset.onPlaying();
-});
-document.getElementById('retryBtn').addEventListener('click', () => {
-  document.getElementById('overOverlay').classList.add('hidden');
-  reset();
-  playing = true;
-  renderPreset.onPlaying();
+// ---------- FSM (docs/contracts/game-hook.d.ts 準拠) ----------
+const fsm = createFSM({
+  title: {
+    exit: () => { document.getElementById('titleOverlay').classList.add('hidden'); if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); },
+  },
+  playing: {
+    enter: () => { reset(); renderPreset.onPlaying(); },
+  },
+  gameover: {
+    enter: () => {
+      beep(120, 0.5, 'sawtooth', 0.22);
+      document.getElementById('result').textContent = state.score;
+      const nb = document.getElementById('newBest');
+      if (scoreStore.submit(state.score)) {
+        nb.textContent = '✦ 最長記録 ✦';
+      } else nb.textContent = '';
+      bestEl.textContent = `最長 ${scoreStore.best()} 間`;
+      setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 400);
+    },
+    exit: () => document.getElementById('overOverlay').classList.add('hidden'),
+  },
+}, 'title');
+
+document.getElementById('startBtn').addEventListener('click', () => fsm.transition('playing'));
+document.getElementById('retryBtn').addEventListener('click', () => fsm.transition('playing'));
+// 実導線: キーボードでも開始/リスタートできること(verify N1)
+addEventListener('keydown', (e) => {
+  if ((e.code === 'Space' || e.code === 'Enter') && (fsm.is('title') || fsm.is('gameover'))) {
+    e.preventDefault();
+    fsm.transition('playing');
+  }
 });
 
 /* ---------- メインループ ---------- */
@@ -459,11 +481,12 @@ renderer.setAnimationLoop(() => {
 
   updateEmbers(dt, t);
 
-  if (playing) {
+  if (fsm.is('playing')) {
     const dz = speed * dt;
     dist += dz * 0.4;
     speed = Math.min(30, 10 + dist * 0.06);
-    scoreEl.textContent = Math.floor(dist);
+    state.score = Math.floor(dist);
+    scoreEl.textContent = state.score;
 
     // ゲートを手前に流す
     for (const g of gates) {
@@ -497,7 +520,8 @@ renderer.setAnimationLoop(() => {
     }
   }
 
-  renderer.render(scene, camera);
+  renderer.info.reset();
+  bloom.render();
   if (!ready) { console.log('[site] ready'); ready = true; }
 });
 
@@ -505,6 +529,15 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  bloom.resize(innerWidth, innerHeight); // N9: bloom パスの解像度追随
+});
+
+// 検証パイプライン用フック v2(docs/contracts/game-hook.d.ts)
+window.__GAME__ = createGameHook({
+  fsm,
+  state,
+  rendererInfo: createRendererInfo(renderer),
+  progressFields: ['score'],
 });
 </script>
 </body>

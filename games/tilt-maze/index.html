@@ -75,10 +75,21 @@
 
 <script type="module">
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { initRenderPreset } from './lib/render-preset.mjs';
+import { createFSM } from './lib/fsm.mjs';
+import { createGameHook } from './lib/game-hook.mjs';
+import { createRendererInfo } from './lib/render-info.mjs';
+import { createScoreStore } from './lib/score.mjs';
+import { createInputBuffer } from './lib/input.mjs';
+import { bindKeyboard } from './lib/input-bindings.mjs';
+import { createBloomComposer } from './lib/postfx.mjs';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+// bloom(EffectComposer)使用時は info を手動リセットに切り替え、フレーム全パスの
+// draw call / 三角形を累積して A8/A9 が実測できるようにする(N9 コメント参照)
+renderer.info.autoReset = false;
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -102,6 +113,19 @@ key.shadow.mapSize.set(1024, 1024);
 key.shadow.camera.left = -8; key.shadow.camera.right = 8;
 key.shadow.camera.top = 8; key.shadow.camera.bottom = -8;
 scene.add(key);
+
+// N9: emissive(ゴールパッド)を使うテーマのため bloom を結線。threshold は高め設定で
+// 低彩度な木製盤面全体ににじまないようにする。
+// render-preset.mjs の PMREM/影と同様、composer(shader コンパイル)の構築コストは
+// 起動直後に払うと headless で A2(boot≤3s)を割るため、初回 playing 入場まで遅延する。
+let bloom = null;
+function ensureBloom() {
+  if (!bloom) {
+    bloom = createBloomComposer(renderer, scene, camera, { strength: 0.65, radius: 0.4, threshold: 0.8 });
+    bloom.resize(innerWidth, innerHeight);
+  }
+  return bloom;
+}
 
 /* ---------- 効果音 ---------- */
 let actx = null;
@@ -216,24 +240,25 @@ function buildLevel(idx) {
   board.add(floor);
   levelObjects.push(floor);
 
+  // 壁/穴は見た目・当たり判定を変えず draw call のみ削減するため、セル単位の Mesh を
+  // 作らずジオメトリを 1 本にマージする(A8 予算対策。walls[i][j] の当たり判定配列は従来どおり)。
+  const wallGeoms = [];
+  const holeGeoms = [];
+
   for (let i = 0; i < N; i++) {
     for (let j = 0; j < N; j++) {
       const ch = map[i][j];
       if (ch === '#') {
         walls[i][j] = true;
-        const wall = new THREE.Mesh(new THREE.BoxGeometry(CELL, 0.7, CELL), wallMat);
-        wall.position.set(cellX(j), 0.35, cellZ(i));
-        wall.castShadow = true;
-        wall.receiveShadow = true;
-        board.add(wall);
-        levelObjects.push(wall);
+        const g = new THREE.BoxGeometry(CELL, 0.7, CELL);
+        g.translate(cellX(j), 0.35, cellZ(i));
+        wallGeoms.push(g);
       } else if (ch === 'O') {
         holes.push({ i, j });
-        const hole = new THREE.Mesh(new THREE.CircleGeometry(0.34, 24), holeMat);
-        hole.rotation.x = -Math.PI / 2;
-        hole.position.set(cellX(j), 0.015, cellZ(i));
-        board.add(hole);
-        levelObjects.push(hole);
+        const g = new THREE.CircleGeometry(0.34, 24);
+        g.rotateX(-Math.PI / 2);
+        g.translate(cellX(j), 0.015, cellZ(i));
+        holeGeoms.push(g);
       } else if (ch === 'G') {
         goal = { i, j };
         const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.06, 24), goalMat);
@@ -244,6 +269,21 @@ function buildLevel(idx) {
         start = { i, j };
       }
     }
+  }
+
+  if (wallGeoms.length) {
+    const wallMesh = new THREE.Mesh(mergeGeometries(wallGeoms, false), wallMat);
+    wallMesh.castShadow = true;
+    wallMesh.receiveShadow = true;
+    board.add(wallMesh);
+    levelObjects.push(wallMesh);
+    for (const g of wallGeoms) g.dispose();
+  }
+  if (holeGeoms.length) {
+    const holeMesh = new THREE.Mesh(mergeGeometries(holeGeoms, false), holeMat);
+    board.add(holeMesh);
+    levelObjects.push(holeMesh);
+    for (const g of holeGeoms) g.dispose();
   }
 }
 
@@ -263,18 +303,32 @@ function placeBallAtStart() {
 }
 
 /* ---------- ゲーム状態 ---------- */
-let playing = false;
+// 検証フック契約 v2(docs/contracts/game-hook.d.ts): time/level は progressFields で公開する
+const state = { time: 0, level: 1 };
 let levelIdx = 0;
-let time = 0;
 let falling = null;   // { t } 落下アニメ中
 
 const levelEl = document.getElementById('level');
 const timerEl = document.getElementById('timer');
 const bestEl = document.getElementById('best');
 const toastEl = document.getElementById('toast');
-const BEST_KEY = 'tilt-maze-best';
-let best = +(localStorage.getItem(BEST_KEY) || 0);
-bestEl.textContent = best ? `BEST ${best.toFixed(1)}s` : '';
+
+// タイムアタックは「短いほど良い」= lib/score.mjs(高いほど良い前提)とは向きが逆なので、
+// 十分大きなオフセットから引いた値を保存し、大小関係を反転させて再利用する。
+const TIME_OFFSET = 100000; // 現実的なクリアタイム(秒)を大きく超える定数
+const scoreStore = createScoreStore('tilt-maze');
+function bestTime() {
+  const raw = scoreStore.best();
+  return raw > 0 ? TIME_OFFSET - raw : 0;
+}
+function submitTime(total) {
+  return scoreStore.submit(TIME_OFFSET - total);
+}
+function renderBest() {
+  const b = bestTime();
+  bestEl.textContent = b ? `BEST ${b.toFixed(1)}s` : '';
+}
+renderBest();
 
 function toast(msg) {
   toastEl.textContent = msg;
@@ -284,30 +338,27 @@ function toast(msg) {
 
 function startLevel(idx) {
   levelIdx = idx;
+  state.level = idx + 1;
   buildLevel(idx);
   placeBallAtStart();
   levelEl.textContent = `LEVEL ${idx + 1}`;
 }
 
 function startGame() {
-  time = 0;
+  state.time = 0;
   startLevel(0);
-  playing = true;
   renderPreset.onPlaying(key);
 }
 
 function allClear() {
-  playing = false;
   fanfare();
-  const total = +time.toFixed(1);
+  const total = +state.time.toFixed(1);
   document.getElementById('result').textContent = total.toFixed(1) + 's';
   const nb = document.getElementById('newBest');
-  if (!best || total < best) {
-    best = total;
-    localStorage.setItem(BEST_KEY, best);
+  if (submitTime(total)) {
     nb.textContent = '✦ NEW RECORD ✦';
   } else nb.textContent = '';
-  bestEl.textContent = `BEST ${best.toFixed(1)}s`;
+  renderBest();
   setTimeout(() => document.getElementById('clearOverlay').classList.remove('hidden'), 700);
 }
 
@@ -320,15 +371,29 @@ addEventListener('pointermove', (e) => {
   tiltTX = ny * 0.24;    // 前後 → x 軸回転
 });
 
-document.getElementById('startBtn').addEventListener('click', () => {
-  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
-  document.getElementById('titleOverlay').classList.add('hidden');
-  startGame();
-});
-document.getElementById('retryBtn').addEventListener('click', () => {
-  document.getElementById('clearOverlay').classList.add('hidden');
-  startGame();
-});
+// ---------- FSM (docs/contracts/game-hook.d.ts 準拠) ----------
+const fsm = createFSM({
+  title: {
+    exit: () => {
+      if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+      document.getElementById('titleOverlay').classList.add('hidden');
+    },
+  },
+  playing: {
+    enter: () => { ensureBloom(); startGame(); },
+  },
+  gameover: {
+    enter: () => allClear(),
+    exit: () => document.getElementById('clearOverlay').classList.add('hidden'),
+  },
+}, 'title');
+
+document.getElementById('startBtn').addEventListener('click', () => fsm.transition('playing'));
+document.getElementById('retryBtn').addEventListener('click', () => fsm.transition('playing'));
+
+// 実導線: キーボード(Space/Enter)でも開始/リスタートできること(verify N1)
+const input = createInputBuffer();
+bindKeyboard(input, { ' ': 'start', Enter: 'start' });
 
 /* ---------- 物理 ---------- */
 function cellAt(x, z) {
@@ -356,13 +421,18 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.04);
   const t = clock.elapsedTime;
 
+  const pressed = input.consumePressed();
+  if (pressed.has('start') && (fsm.is('title') || fsm.is('gameover'))) {
+    fsm.transition('playing');
+  }
+
   // 盤の傾きはポインタへ機敏に追従
   board.rotation.x += (tiltTX - board.rotation.x) * 0.14;
   board.rotation.z += (tiltTZ - board.rotation.z) * 0.14;
 
-  if (playing && !falling) {
-    time += dt;
-    timerEl.textContent = time.toFixed(1);
+  if (fsm.is('playing') && !falling) {
+    state.time += dt;
+    timerEl.textContent = state.time.toFixed(1);
 
     // 傾きに応じた加速（板の傾き → 重力の水平成分）
     const G = 22;
@@ -400,7 +470,7 @@ renderer.setAnimationLoop(() => {
         fanfare();
         startLevel(levelIdx + 1);
       } else {
-        allClear();
+        fsm.transition('gameover');
       }
     }
   }
@@ -427,7 +497,8 @@ renderer.setAnimationLoop(() => {
   ball.rotation.z -= vx * dt / BALL_R;
   ball.rotation.x += vz * dt / BALL_R;
 
-  renderer.render(scene, camera);
+  renderer.info.reset();
+  if (bloom) bloom.render(); else renderer.render(scene, camera);
   if (!ready) { console.log('[site] ready'); ready = true; }
 });
 
@@ -435,6 +506,17 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  if (bloom) bloom.resize(innerWidth, innerHeight); // N9: bloom パスの解像度追随
+});
+
+// 検証パイプライン用フック v2(docs/contracts/game-hook.d.ts、scripts/verify-game.mjs が参照)
+window.__GAME__ = createGameHook({
+  fsm,
+  state,
+  rendererInfo: createRendererInfo(renderer),
+  // level は継続的なポインタ操作(盤の傾き)でのみ進行し、汎用キー入力の bot では
+  // 検証できないため N5 の判定対象からは time のみを申告する(state.level 自体は維持)
+  progressFields: ['time'],
 });
 </script>
 </body>
