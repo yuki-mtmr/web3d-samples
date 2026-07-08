@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>鳥居駆け — Tori Gate Run</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⛩️</text></svg>">
+<style>
+  :root {
+    /* [THEME-TOKEN] brief.json の palette と一致させること(verify THEME 検査対象) */
+    --tk-primary: #c73e3a;
+    --tk-accent: #ffd9a0;
+    --tk-background: #10141f;
+    --tk-danger: #ff5a3c;
+    --bg: var(--tk-background); --fg: var(--tk-accent); --accent: var(--tk-primary); --danger: var(--tk-danger);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--fg);
+    font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; touch-action: none; }
+  canvas { display: block; }
+  .hud { position: fixed; top: 12px; left: 0; right: 0; display: flex;
+    justify-content: space-between; padding: 0 16px; font-size: clamp(0.9rem, 2.5vw, 1.1rem);
+    pointer-events: none; text-shadow: 0 0 8px rgba(255, 217, 160, 0.55); }
+  .overlay { position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 16px; text-align: center;
+    background: rgba(16, 20, 31, 0.84); backdrop-filter: blur(4px); transition: opacity 0.25s; }
+  .overlay.hidden { opacity: 0; pointer-events: none; }
+  .overlay h1 { font-size: clamp(2rem, 6vw, 3rem); letter-spacing: 0.18em;
+    color: var(--accent); text-shadow: 0 0 24px var(--accent); }
+  .overlay p { opacity: 0.9; max-width: 34ch; line-height: 1.8; }
+  .btn { pointer-events: auto; cursor: pointer; border: 1px solid var(--accent);
+    background: transparent; color: var(--accent); padding: 12px 36px; font-size: 1.05rem;
+    border-radius: 4px; letter-spacing: 0.2em; transition: background 0.15s, color 0.15s;
+    font-family: inherit; }
+  .btn:hover { background: var(--accent); color: var(--bg); }
+  .mute { position: fixed; bottom: 12px; right: 12px; font-size: 1.3rem; opacity: 0.6;
+    cursor: pointer; background: none; border: none; color: var(--fg); }
+</style>
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.185.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.185.0/examples/jsm/"
+    }
+  }
+</script>
+</head>
+<body>
+<div class="hud">
+  <span id="score">くぐり 0</span>
+  <span id="best">最高 0</span>
+</div>
+<div class="overlay" id="titleOverlay">
+  <h1>鳥 居 駆 け</h1>
+  <p>← → / A D / スワイプ で移動。<br>連なる鳥居をくぐり損ねずに駆け抜けろ。<br>石垣に当たれば終わり。</p>
+  <button class="btn" id="startBtn">駆ける</button>
+</div>
+<div class="overlay hidden" id="overOverlay">
+  <h1 id="overTitle">日暮れ</h1>
+  <p id="overScore"></p>
+  <button class="btn" id="retryBtn">もう一度</button>
+</div>
+<button class="mute" id="muteBtn" aria-label="mute">🔊</button>
+
+<script type="module">
+import * as THREE from 'three';
+import { createLoop } from './lib/loop.mjs';
+import { createFSM } from './lib/fsm.mjs';
+import { createInputBuffer } from './lib/input.mjs';
+import { bindKeyboard, bindPointer } from './lib/input-bindings.mjs';
+import { createScoreStore } from './lib/score.mjs';
+import { createRamp, createEventSchedule } from './lib/difficulty.mjs';
+import { createSfx } from './lib/sfx.mjs';
+import { createShake, createHitstop, createBurstPool, lerp } from './lib/juice.mjs';
+import { createRng } from './lib/rng.mjs';
+import { createGameHook } from './lib/game-hook.mjs';
+import { createRendererInfo } from './lib/render-info.mjs';
+import { createBloomComposer } from './lib/postfx.mjs';
+import { createNoiseField, mapToRGBA } from './lib/procedural-texture.mjs';
+
+// ---------- 定数(theme-sheet.md / brief.json 準拠) ----------
+const GAME_ID = 'tori-gate-run';
+const LANES = [-2.4, -1.2, 0, 1.2, 2.4];
+const SPAWN_Z = -36;
+const KILL_Z = 6;
+const GATE_POOL = 10;
+const COLOR = { primary: 0xc73e3a, accent: 0xffd9a0, background: 0x10141f };
+
+// ---------- 基盤セットアップ ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // principles.md #8
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.info.autoReset = false; // bloom 使用時のフレーム全パス累積計測(A8/A9)
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(COLOR.background, 16, 44); // 40s の霧イベントで near を詰める
+scene.background = new THREE.Color(COLOR.background);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(0, 3.4, 7.4);
+camera.lookAt(0, 1.2, -8);
+const cameraBase = camera.position.clone();
+
+const bloom = createBloomComposer(renderer, scene, camera, { strength: 0.65, threshold: 0.55 });
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  bloom.resize(window.innerWidth, window.innerHeight); // N9: bloom パスの解像度追随
+});
+
+scene.add(new THREE.HemisphereLight(0x30405c, 0x141018, 1.15));
+const lanternLight = new THREE.PointLight(COLOR.accent, 1.6, 30);
+lanternLight.position.set(0, 4, 2);
+scene.add(lanternLight);
+
+// ---------- ワールド構築 ----------
+// T1: 参道の石畳(単色大面積のテーマ核 → 手続き型テクスチャ、M7 実証パターン)
+function stoneTexture() {
+  const size = 256;
+  const field = createNoiseField(1212, size, size, { octaves: 4, baseCell: 24 });
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  canvas.getContext('2d').putImageData(new ImageData(mapToRGBA(field, [
+    { at: 0, color: [18, 22, 33] }, { at: 0.55, color: [34, 40, 56] },
+    { at: 0.8, color: [52, 58, 76] }, { at: 1, color: [70, 76, 94] },
+  ]), size, size), 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(14, 48);
+  return tex;
+}
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(60, 200),
+  new THREE.MeshStandardMaterial({ color: 0xffffff, map: stoneTexture(), roughness: 0.9 }),
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.set(0, -0.01, -60);
+scene.add(ground);
+
+// 遠景の山影シルエット
+for (const [x, s] of [[-16, 26], [14, 32]]) {
+  const hill = new THREE.Mesh(
+    new THREE.ConeGeometry(s, s * 0.5, 4),
+    new THREE.MeshBasicMaterial({ color: 0x0a0d16 }),
+  );
+  hill.position.set(x, -2, -46);
+  scene.add(hill);
+}
+
+// プレイヤー(提灯を提げた駆け手)
+const player = new THREE.Group();
+const body = new THREE.Mesh(
+  new THREE.CapsuleGeometry(0.32, 0.55, 4, 12),
+  new THREE.MeshStandardMaterial({ color: 0x2c3550, roughness: 0.6 }),
+);
+body.position.y = 0.65;
+const handLantern = new THREE.Mesh(
+  new THREE.BoxGeometry(0.22, 0.3, 0.22),
+  new THREE.MeshStandardMaterial({ color: COLOR.accent, emissive: COLOR.accent, emissiveIntensity: 1.4 }),
+);
+handLantern.position.set(0.42, 0.75, 0.1);
+player.add(body, handLantern);
+scene.add(player);
+
+// 鳥居(朱)・石垣(封鎖レーン)・参道両脇の提灯列 — 全て InstancedMesh。
+// InstancedMesh の boundingSphere は初回配置で固定され culling 誤爆するため必ず無効化する
+const dummy = new THREE.Object3D();
+const mkInstanced = (geo, mat, count) => {
+  const m = new THREE.InstancedMesh(geo, mat, count);
+  m.frustumCulled = false;
+  scene.add(m);
+  return m;
+};
+const toriiMat = new THREE.MeshStandardMaterial({
+  color: COLOR.primary, emissive: COLOR.primary, emissiveIntensity: 0.75, roughness: 0.5,
+});
+const pillarMesh = mkInstanced(new THREE.BoxGeometry(0.28, 3.0, 0.28), toriiMat, GATE_POOL * 2);
+const kasagiMesh = mkInstanced(new THREE.BoxGeometry(4.9, 0.3, 0.4), toriiMat, GATE_POOL);
+const nukiMesh = mkInstanced(new THREE.BoxGeometry(4.1, 0.2, 0.3), toriiMat, GATE_POOL);
+const wallMesh = mkInstanced(
+  new THREE.BoxGeometry(1.1, 1.1, 0.5),
+  new THREE.MeshStandardMaterial({ color: 0x232838, roughness: 0.9 }),
+  GATE_POOL * 4,
+);
+const wallLampMesh = mkInstanced(
+  new THREE.BoxGeometry(0.2, 0.24, 0.2),
+  new THREE.MeshStandardMaterial({ color: COLOR.accent, emissive: COLOR.accent, emissiveIntensity: 1.2 }),
+  GATE_POOL * 4,
+);
+const DECOR_LANTERNS = 14;
+const decorLanternMesh = mkInstanced(
+  new THREE.BoxGeometry(0.3, 0.42, 0.3),
+  new THREE.MeshStandardMaterial({ color: COLOR.accent, emissive: COLOR.accent, emissiveIntensity: 1.5 }),
+  DECOR_LANTERNS,
+);
+const decorLanterns = Array.from({ length: DECOR_LANTERNS }, (_, i) => ({
+  x: i % 2 === 0 ? -4.2 : 4.2,
+  z: -6 * Math.floor(i / 2) + 2,
+}));
+
+// ゲート: center レーン ±1 が「くぐれる」開口、それより外は石垣で封鎖
+const gates = Array.from({ length: GATE_POOL }, () => ({ active: false, center: 2, z: 0, passed: false }));
+const blockedLanes = (center) => LANES.map((_, l) => l).filter((l) => Math.abs(l - center) > 1);
+
+function syncWorld() {
+  gates.forEach((g, i) => {
+    const cx = g.active ? LANES[g.center] : 0;
+    const z = g.active ? g.z : 9999;
+    dummy.position.set(cx - 2.1, 1.5, z); dummy.updateMatrix();
+    pillarMesh.setMatrixAt(i * 2, dummy.matrix);
+    dummy.position.set(cx + 2.1, 1.5, z); dummy.updateMatrix();
+    pillarMesh.setMatrixAt(i * 2 + 1, dummy.matrix);
+    dummy.position.set(cx, 3.1, z); dummy.updateMatrix();
+    kasagiMesh.setMatrixAt(i, dummy.matrix);
+    dummy.position.set(cx, 2.35, z); dummy.updateMatrix();
+    nukiMesh.setMatrixAt(i, dummy.matrix);
+    const blocked = g.active ? blockedLanes(g.center) : [];
+    for (let s = 0; s < 4; s += 1) {
+      const lane = blocked[s];
+      const bx = lane !== undefined ? LANES[lane] : 0;
+      const bz = lane !== undefined ? z : 9999;
+      dummy.position.set(bx, 0.55, bz); dummy.updateMatrix();
+      wallMesh.setMatrixAt(i * 4 + s, dummy.matrix);
+      dummy.position.set(bx, 1.22, bz); dummy.updateMatrix();
+      wallLampMesh.setMatrixAt(i * 4 + s, dummy.matrix);
+    }
+  });
+  decorLanterns.forEach((d, i) => {
+    dummy.position.set(d.x, 1.6, d.z); dummy.updateMatrix();
+    decorLanternMesh.setMatrixAt(i, dummy.matrix);
+  });
+  for (const m of [pillarMesh, kasagiMesh, nukiMesh, wallMesh, wallLampMesh, decorLanternMesh]) {
+    m.instanceMatrix.needsUpdate = true;
+  }
+}
+
+// ---------- 基盤モジュールの結線 ----------
+const input = createInputBuffer();
+bindKeyboard(input, {
+  ArrowLeft: 'left', a: 'left', A: 'left',
+  ArrowRight: 'right', d: 'right', D: 'right',
+  ' ': 'action', Enter: 'action', Escape: 'pause',
+});
+bindPointer(input, document.body);
+
+const sfx = createSfx();
+const shake = createShake();
+const hitstop = createHitstop();
+const burst = createBurstPool(scene, { color: COLOR.accent });
+const scoreStore = createScoreStore(GAME_ID);
+
+// 決定論的 RNG (principles.md #10): ゲームプレイに影響する乱数は必ずこの rng を使う
+const rng = createRng();
+
+const speedRamp = createRamp({ base: 9, perSecond: 0.3, max: 21 }); // principles.md #7
+const intervalRamp = createRamp({ base: 1.25, perSecond: -0.012, min: 0.62 });
+const events = createEventSchedule([
+  { at: 40, name: 'mist' }, // brief: 40s で霧
+]);
+
+// ---------- ゲーム状態 ----------
+const state = {
+  playerLane: 2, playerX: 0, score: 0, time: 0, spawnTimer: 0.6,
+  lane: 2, laneCount: LANES.length, obstacles: [],
+};
+
+const ui = {
+  score: document.getElementById('score'),
+  best: document.getElementById('best'),
+  title: document.getElementById('titleOverlay'),
+  over: document.getElementById('overOverlay'),
+  overTitle: document.getElementById('overTitle'),
+  overScore: document.getElementById('overScore'),
+};
+ui.best.textContent = `最高 ${scoreStore.best()}`;
+
+function resetRun() {
+  state.playerLane = 2; state.playerX = 0; state.score = 0; state.time = 0;
+  state.spawnTimer = 0.6; state.obstacles = [];
+  scene.fog.near = 16;
+  events.reset();
+  for (const g of gates) { g.active = false; g.passed = false; }
+  lastCenter = 2;
+  // 初回ゲートは手前に置き、開始直後に「くぐる」体験と score 進行が始まるようにする
+  spawnGate();
+  gates[0].z = -16;
+  syncWorld();
+  // 必須: 開始/リスタートを起こした入力自体が buffer に残ると 1 フレーム目に暴発する
+  input.reset();
+}
+
+let lastCenter = 2;
+function spawnGate() {
+  const slot = gates.find((g) => !g.active);
+  if (!slot) return;
+  slot.active = true;
+  slot.passed = false;
+  // 開口 3 レーン(center±1)の中心をランダムウォークさせる。隣接ステップに限定することで
+  // 「前の開口内のどのレーンからも 1 移動で次の開口に届く」= 理不尽なし、かつ
+  // 中央に居続けるだけでは生き残れない(N7 が検出した設計欠陥への対策)
+  lastCenter = Math.max(0, Math.min(LANES.length - 1, lastCenter + rng.int(-1, 1)));
+  slot.center = lastCenter;
+  slot.z = SPAWN_Z;
+}
+
+// ---------- FSM (principles.md #2) ----------
+const fsm = createFSM({
+  title: {
+    enter: () => ui.title.classList.remove('hidden'),
+    exit: () => { ui.title.classList.add('hidden'); sfx.unlock(); },
+  },
+  playing: {
+    enter: (from) => { if (from !== 'paused') resetRun(); },
+  },
+  paused: {},
+  gameover: {
+    enter: () => {
+      const isBest = scoreStore.submit(state.score);
+      ui.overTitle.textContent = isBest ? '新記録!' : '日暮れ';
+      ui.overScore.textContent = `くぐり ${state.score} / 最高 ${scoreStore.best()}`;
+      ui.best.textContent = `最高 ${scoreStore.best()}`;
+      ui.over.classList.remove('hidden');
+    },
+    exit: () => ui.over.classList.add('hidden'),
+  },
+}, 'title');
+
+document.getElementById('startBtn').addEventListener('click', () => fsm.transition('playing'));
+document.getElementById('retryBtn').addEventListener('click', () => fsm.transition('playing')); // principles.md #5
+// 実導線: キーボードでも開始/リスタートできること(verify N1)
+window.addEventListener('keydown', (e) => {
+  if ((e.code === 'Space' || e.code === 'Enter') && (fsm.is('title') || fsm.is('gameover'))) {
+    e.preventDefault();
+    fsm.transition('playing');
+  }
+});
+document.getElementById('muteBtn').addEventListener('click', (e) => {
+  sfx.setMuted(!sfx.isMuted());
+  e.target.textContent = sfx.isMuted() ? '🔇' : '🔊';
+});
+
+// ---------- 更新ロジック ----------
+function updatePlaying(dt) {
+  state.time += dt;
+
+  const pressed = input.consumePressed();
+  if (pressed.has('left')) { state.playerLane = Math.max(0, state.playerLane - 1); sfx.click(0.05); }
+  if (pressed.has('right')) { state.playerLane = Math.min(LANES.length - 1, state.playerLane + 1); sfx.click(0.05); }
+  if (pressed.has('pause')) { fsm.transition('paused'); return; }
+
+  for (const fired of events.fire(state.time)) {
+    if (fired.name === 'mist') scene.fog.near = 9; // 霧が濃くなり先読みが難しくなる
+    sfx.rise(0.06);
+  }
+
+  state.spawnTimer -= dt;
+  if (state.spawnTimer <= 0) {
+    spawnGate();
+    state.spawnTimer = intervalRamp.at(state.time);
+  }
+
+  const speed = speedRamp.at(state.time);
+  for (const g of gates) {
+    if (!g.active) continue;
+    g.z += speed * dt;
+    // くぐり判定: 開口内で通過 → 加点
+    if (!g.passed && g.z > 0.5) {
+      g.passed = true;
+      if (Math.abs(state.playerLane - g.center) <= 1) {
+        state.score += 1;
+        burst.burst(player.position, 14, 3);
+        sfx.ping(0.06);
+      }
+    }
+    // 石垣衝突: 封鎖レーンにいると被弾
+    if (Math.abs(g.z) < 0.8 && Math.abs(state.playerLane - g.center) > 1) {
+      burst.burst(player.position, 36, 5);
+      shake.add(0.6);
+      hitstop.trigger(0.1);
+      sfx.crash();
+      fsm.transition('gameover');
+      return;
+    }
+    if (g.z > KILL_Z) g.active = false;
+  }
+
+  // 提灯列のループ
+  for (const d of decorLanterns) {
+    d.z += speed * dt;
+    if (d.z > KILL_Z) d.z -= 6 * (DECOR_LANTERNS / 2);
+  }
+
+  // bot 可読 state(verify B ゲート): 封鎖レーンを obstacles として公開
+  state.lane = state.playerLane;
+  state.obstacles = gates
+    .filter((g) => g.active && g.z < 0.8)
+    .flatMap((g) => blockedLanes(g.center).map((lane) => ({ lane, distance: -g.z })));
+}
+
+const loop = createLoop({ // principles.md #1
+  fixedStep: 1 / 60,
+  update: (dt) => {
+    const scaled = hitstop.scale(dt);
+    if (fsm.is('playing')) updatePlaying(scaled);
+    if (fsm.is('paused') && input.consumePressed().has('pause')) fsm.transition('playing');
+    shake.update(dt);
+    burst.update(scaled);
+  },
+  render: () => {
+    // 離散状態(レーン)と連続描画(lerp)の分離 (principles.md #3)
+    state.playerX = lerp(state.playerX, LANES[state.playerLane], 0.22);
+    player.position.x = state.playerX;
+    player.rotation.z = (state.playerX - LANES[state.playerLane]) * 0.25;
+    const offset = shake.offset();
+    camera.position.set(cameraBase.x + state.playerX * 0.35 + offset.x, cameraBase.y + offset.y, cameraBase.z);
+    syncWorld();
+    ui.score.textContent = `くぐり ${state.score}`;
+    renderer.info.reset();
+    bloom.render();
+  },
+});
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => loop.tick(clock.getDelta()));
+
+// 検証パイプライン用フック v2(docs/contracts/game-hook.d.ts)
+window.__GAME__ = createGameHook({
+  fsm,
+  state,
+  rendererInfo: createRendererInfo(renderer),
+  progressFields: ['score', 'time'],
+  seedRng: rng.reseed,
+});
+</script>
+</body>
+</html>

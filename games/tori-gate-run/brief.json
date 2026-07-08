@@ -1,0 +1,23 @@
+{
+  "id": "B12",
+  "styleKeyword": "和風",
+  "palette": {
+    "primary": "#c73e3a",
+    "accent": "#ffd9a0",
+    "background": "#10141f",
+    "danger": "#ff5a3c"
+  },
+  "mood": [
+    "和風",
+    "提灯灯り",
+    "発光"
+  ],
+  "lighting": "提灯の暖色ポイント光 + 宵闇の環境光。鳥居は朱の emissive で浮かせ、40s の霧イベントで fog を詰める",
+  "prohibitions": [
+    "テクスチャ画像の使用",
+    "鳥居が背景に埋没する配色",
+    "寒色ネオンへの逸脱"
+  ],
+  "assetTier": "T1",
+  "cluster": "C1"
+}
