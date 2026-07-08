@@ -1,0 +1,30 @@
+{
+  "id": "B21",
+  "styleKeyword": "ネオン",
+  "palette": {
+    "primary": "#c79aff",
+    "accent": "#8affda",
+    "background": "#120a1c",
+    "danger": "#ff7ab8"
+  },
+  "mood": [
+    "高彩度",
+    "発光",
+    "都市夜景"
+  ],
+  "lighting": "藍紫のアンビエント + 白色ディレクショナルの平坦照明。壁面・パドル・ボール・ブロックは emissive 発光で自発光を主体にする",
+  "prohibitions": [
+    "外部テクスチャ画像の使用",
+    "パステル/低彩度への逸脱(ネオン発光の否定)",
+    "壁面・パドルの emissive を無効化する暗色変更"
+  ],
+  "assetTier": "T1",
+  "cluster": "C2",
+  "renderPreset": {
+    "toneMapping": "neutral",
+    "exposure": 0.9,
+    "envIntensity": 0.3,
+    "shadows": false,
+    "background": "procedural"
+  }
+}

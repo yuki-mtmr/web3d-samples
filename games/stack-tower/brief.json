@@ -1,0 +1,30 @@
+{
+  "id": "B29",
+  "styleKeyword": "ネオン",
+  "palette": {
+    "primary": "#399ed0",
+    "accent": "#ffd24a",
+    "background": "#12141f",
+    "danger": "#ff5a3c"
+  },
+  "mood": [
+    "高彩度",
+    "発光",
+    "ミニマル"
+  ],
+  "lighting": "アンビエント白 0.65 + 上方ディレクショナル白 1.4、遠景を紺の fog で溶かして塔を浮かび上がらせる",
+  "prohibitions": [
+    "外部テクスチャ画像の使用",
+    "ブロックの彩度を大きく落とす低彩度パレットへの変更",
+    "背景を黒潰れさせる過度な暗さへの変更"
+  ],
+  "assetTier": "T1",
+  "cluster": "C2",
+  "renderPreset": {
+    "toneMapping": "neutral",
+    "exposure": 1.0,
+    "envIntensity": 0.3,
+    "shadows": false,
+    "background": "procedural"
+  }
+}

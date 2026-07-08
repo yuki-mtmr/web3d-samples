@@ -1,0 +1,29 @@
+{
+  "id": "B27",
+  "styleKeyword": "ネオン",
+  "palette": {
+    "primary": "#8affda",
+    "accent": "#a78bfa",
+    "background": "#0c0a18",
+    "danger": "#ff7a9e"
+  },
+  "mood": [
+    "高彩度",
+    "発光"
+  ],
+  "lighting": "AmbientLight のみ(0x554a88)+ 全ジオメトリ MeshBasicMaterial の自己発光表現。陰影計算なし",
+  "prohibitions": [
+    "外部テクスチャ画像の使用",
+    "レーン/ノーツ配色が背景(#0c0a18)に埋没すること",
+    "高彩度発光からの低彩度トーンへの逸脱"
+  ],
+  "assetTier": "T1",
+  "cluster": "C2",
+  "renderPreset": {
+    "toneMapping": "neutral",
+    "exposure": 0.9,
+    "envIntensity": 0.3,
+    "shadows": false,
+    "background": "procedural"
+  }
+}

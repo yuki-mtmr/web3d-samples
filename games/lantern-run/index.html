@@ -8,10 +8,18 @@
 <script type="importmap">
 {"imports":{"three":"https://unpkg.com/three@0.185.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.185.0/examples/jsm/"}}
 </script>
+<!-- importmap already includes three/addons/ (used by lib/render-preset.mjs) -->
 <style>
+  :root {
+    /* [THEME-TOKEN] brief.json の palette と一致させること(verify THEME 検査対象) */
+    --tk-primary: #c22a18;
+    --tk-accent: #ff9a4d;
+    --tk-background: #0a0716;
+    --tk-danger: #e0432d;
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Hiragino Mincho ProN', serif; }
-  body { background: #0a0716; touch-action: none; }
+  body { background: var(--tk-background); touch-action: none; }
   canvas { display: block; }
   .hud {
     position: fixed; top: 3vh; left: 0; right: 0; text-align: center;
@@ -59,16 +67,160 @@
 
 <script type="module">
 import * as THREE from 'three';
+import { initRenderPreset } from './lib/render-preset.mjs';
+import { createRng } from './lib/rng.mjs';
+import { createNoiseField } from './lib/procedural-texture.mjs';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0716);
 scene.fog = new THREE.Fog(0x0d0820, 18, 70);
+
+// ---------- Wave2 StageB: 夜空グラデ+月+星(scene.background、fog の影響を受けない) ----------
+// 演出専用の乱数(seed 固定)。gameplay の rng とは分離(principles.md #10 対象外)。
+function skyTexture(seed) {
+  const w = 512, h = 512;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, '#04030a');      // 天頂: background(#0a0716)よりさらに深い闇
+  grad.addColorStop(0.55, '#0a0716');   // --tk-background と一致
+  grad.addColorStop(1, '#241221');      // 地平線際は primary 寄りにわずかに紫赤みを帯びさせる
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+
+  // 月: accent(#ff9a4d)の光暈(寒色ネオン禁忌のため橙で統一)
+  const moonX = w * 0.7, moonY = h * 0.16, moonR = w * 0.04;
+  const halo = ctx.createRadialGradient(moonX, moonY, 0, moonX, moonY, moonR * 6);
+  halo.addColorStop(0, 'rgba(255, 154, 77, 0.8)');
+  halo.addColorStop(0.15, 'rgba(255, 154, 77, 0.3)');
+  halo.addColorStop(1, 'rgba(255, 154, 77, 0)');
+  ctx.fillStyle = halo;
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#fff2d8';
+  ctx.beginPath();
+  ctx.arc(moonX, moonY, moonR, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 星: createRng で決定論化(seed 固定、演出専用インスタンス)
+  const starRng = createRng(seed);
+  for (let i = 0; i < 180; i += 1) {
+    const x = starRng.next() * w;
+    const y = starRng.next() * h * 0.6;
+    const r = starRng.range(0.4, 1.3);
+    const a = starRng.range(0.2, 0.9);
+    ctx.fillStyle = `rgba(255, 245, 230, ${a})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+scene.background = skyTexture(9101);
+
+// 遠景山影 2 層(fbm 稜線、fog:false — scene.background 同様に霧の影響を受けさせない)
+function silhouetteTexture(seed, colorHex, { baseCell = 48, ridgeMin = 0.28, ridgeSpread = 0.34 } = {}) {
+  const w = 512, h = 256;
+  const field = createNoiseField(seed, w, 1, { octaves: 4, baseCell });
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  ctx.beginPath();
+  ctx.moveTo(0, h);
+  for (let x = 0; x < w; x += 1) {
+    const ridge = h * (ridgeMin + ridgeSpread * field[x]);
+    ctx.lineTo(x, ridge);
+  }
+  ctx.lineTo(w, h);
+  ctx.closePath();
+  ctx.fillStyle = colorHex;
+  ctx.fill();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const farHills = new THREE.Mesh(
+  new THREE.PlaneGeometry(240, 80),
+  new THREE.MeshBasicMaterial({
+    map: silhouetteTexture(5201, '#170b1c', { baseCell: 64, ridgeMin: 0.28, ridgeSpread: 0.24 }), // 遠層: background に近い暗紫で霞ませる
+    transparent: true, fog: false, depthWrite: false,
+  }),
+);
+farHills.position.set(0, 6, -85);
+scene.add(farHills);
+
+const nearHills = new THREE.Mesh(
+  new THREE.PlaneGeometry(200, 70),
+  new THREE.MeshBasicMaterial({
+    map: silhouetteTexture(5202, '#0a0510', { baseCell: 30, ridgeMin: 0.2, ridgeSpread: 0.3 }), // 近層: background よりさらに暗い黒に近い紫
+    transparent: true, fog: false, depthWrite: false,
+  }),
+);
+nearHills.position.set(0, 4, -65);
+scene.add(nearHills);
+
+// 火の粉 Points(THREE.Points 1 本、draw call +1)。accent 色(#ff9a4d)でゆっくり立ち上る。
+function emberSprite() {
+  const size = 64;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, 'rgba(255, 242, 216, 1)');
+  grad.addColorStop(0.4, 'rgba(255, 154, 77, 0.8)');
+  grad.addColorStop(1, 'rgba(255, 154, 77, 0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const EMBER_N = 200;
+const EMBER_X = 8, EMBER_Y_MIN = 0.1, EMBER_Y_MAX = 6, EMBER_Z_MIN = -80, EMBER_Z_MAX = 5;
+const emberRng = createRng(6402); // 演出専用 rng(gameplay の Math.random とは分離)
+const emberPos = new Float32Array(EMBER_N * 3);
+const emberSpeed = new Float32Array(EMBER_N);
+const emberPhase = new Float32Array(EMBER_N);
+for (let i = 0; i < EMBER_N; i += 1) {
+  emberPos[i * 3] = emberRng.range(-EMBER_X, EMBER_X);
+  emberPos[i * 3 + 1] = emberRng.range(EMBER_Y_MIN, EMBER_Y_MAX);
+  emberPos[i * 3 + 2] = emberRng.range(EMBER_Z_MIN, EMBER_Z_MAX);
+  emberSpeed[i] = emberRng.range(0.2, 0.55);
+  emberPhase[i] = emberRng.range(0, Math.PI * 2);
+}
+const emberGeo = new THREE.BufferGeometry();
+emberGeo.setAttribute('position', new THREE.BufferAttribute(emberPos, 3));
+const embers = new THREE.Points(emberGeo, new THREE.PointsMaterial({
+  map: emberSprite(), size: 0.14, color: 0xff9a4d, transparent: true, opacity: 0.85,
+  blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true,
+}));
+embers.frustumCulled = false;
+scene.add(embers);
+function updateEmbers(dt, elapsed) {
+  const pos = emberGeo.attributes.position.array;
+  for (let i = 0; i < EMBER_N; i += 1) {
+    const idx = i * 3;
+    pos[idx + 1] += emberSpeed[i] * dt;
+    pos[idx] += Math.sin(elapsed * 0.6 + emberPhase[i]) * 0.12 * dt;
+    if (pos[idx + 1] > EMBER_Y_MAX) {
+      pos[idx + 1] = EMBER_Y_MIN;
+      pos[idx] = emberRng.range(-EMBER_X, EMBER_X);
+      pos[idx + 2] = emberRng.range(EMBER_Z_MIN, EMBER_Z_MAX);
+    }
+  }
+  emberGeo.attributes.position.needsUpdate = true;
+}
+
+// T0: tone mapping / IBL / 影は lib/render-preset.mjs に委譲。brief.json の renderPreset が値の SoT。
+// 重い処理(PMREM 焼き込み)は renderPreset.onPlaying() が playing 入場時に遅延実行する。
+const renderPreset = await initRenderPreset(renderer, scene);
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 120);
 camera.position.set(0, 0, 6);
@@ -272,11 +424,13 @@ document.getElementById('startBtn').addEventListener('click', () => {
   document.getElementById('titleOverlay').classList.add('hidden');
   reset();
   playing = true;
+  renderPreset.onPlaying();
 });
 document.getElementById('retryBtn').addEventListener('click', () => {
   document.getElementById('overOverlay').classList.add('hidden');
   reset();
   playing = true;
+  renderPreset.onPlaying();
 });
 
 /* ---------- メインループ ---------- */
@@ -302,6 +456,8 @@ renderer.setAnimationLoop(() => {
   }
   trailPos[0] = px; trailPos[1] = py; trailPos[2] = 0.25;
   trailGeo.attributes.position.needsUpdate = true;
+
+  updateEmbers(dt, t);
 
   if (playing) {
     const dz = speed * dt;

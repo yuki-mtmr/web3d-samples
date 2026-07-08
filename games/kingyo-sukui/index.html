@@ -9,6 +9,13 @@
 {"imports":{"three":"https://unpkg.com/three@0.185.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.185.0/examples/jsm/"}}
 </script>
 <style>
+  :root {
+    /* [THEME-TOKEN] brief.json palette と一致(検証 THEME 対象) */
+    --tk-primary: #d83a2a;
+    --tk-accent: #e8b04b;
+    --tk-background: #10222e;
+    --tk-danger: #ff3a3a;
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Hiragino Mincho ProN', serif; }
   body { background: #10222e; touch-action: none; cursor: none; }
@@ -62,15 +69,19 @@
 
 <script type="module">
 import * as THREE from 'three';
+import { initRenderPreset } from './lib/render-preset.mjs';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x10222e);
+
+// T0: tone mapping / IBL は lib/render-preset.mjs(brief.json の renderPreset が SoT)に委譲。
+// 重い処理(PMREM 焼き込み)は renderPreset.onPlaying() が playing 入場時に遅延実行する。
+const renderPreset = await initRenderPreset(renderer, scene);
 
 const camera = new THREE.PerspectiveCamera(46, innerWidth / innerHeight, 0.1, 100);
 camera.position.set(0, 9.5, 5.2);
@@ -355,11 +366,13 @@ document.getElementById('startBtn').addEventListener('click', () => {
   document.getElementById('titleOverlay').classList.add('hidden');
   reset();
   playing = true;
+  renderPreset.onPlaying();
 });
 document.getElementById('retryBtn').addEventListener('click', () => {
   document.getElementById('overOverlay').classList.add('hidden');
   reset();
   playing = true;
+  renderPreset.onPlaying();
 });
 
 /* ---------- メインループ ---------- */

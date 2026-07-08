@@ -1,0 +1,29 @@
+{
+  "id": "B30",
+  "styleKeyword": "森",
+  "palette": {
+    "primary": "#e8b04b",
+    "accent": "#4ade80",
+    "background": "#1a1410",
+    "danger": "#5e4023"
+  },
+  "mood": [
+    "低彩度",
+    "侘び寂び"
+  ],
+  "lighting": "暖色キーライトが木製盤面を斜め上から照らし、宵闇の環境光が木肌の質感を落ち着いた低彩度に見せる",
+  "prohibitions": [
+    "外部テクスチャ画像の使用",
+    "ゴールパッドの発光緑を弱めて視認性を落とす配色",
+    "暖色木目のトーンを寒色系へ転換する配色"
+  ],
+  "assetTier": "T1",
+  "cluster": "C5",
+  "renderPreset": {
+    "toneMapping": "neutral",
+    "exposure": 1.0,
+    "envIntensity": 0.3,
+    "shadows": false,
+    "background": "procedural"
+  }
+}

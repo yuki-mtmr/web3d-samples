@@ -9,9 +9,16 @@
 {"imports":{"three":"https://unpkg.com/three@0.185.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.185.0/examples/jsm/"}}
 </script>
 <style>
+  :root {
+    /* [THEME-TOKEN] brief.json palette 転記(検証: scripts/verify/theme-tokens.mjs) */
+    --tk-primary: #7ab8ff;
+    --tk-accent: #ffd24a;
+    --tk-background: #0e1220;
+    --tk-danger: #ff5a7a;
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Avenir Next', 'Hiragino Sans', sans-serif; }
-  body { background: #0e1220; touch-action: none; }
+  body { background: var(--tk-background); touch-action: none; }
   canvas { display: block; }
   .hud {
     position: fixed; top: 3vh; left: 0; right: 0; text-align: center;
@@ -28,12 +35,12 @@
     transition: opacity 0.3s ease, visibility 0.3s; text-align: center;
   }
   .overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
-  .overlay h1 { font-size: clamp(2rem, 7vw, 3.2rem); font-weight: 800; letter-spacing: 0.18em; color: #7ab8ff; text-shadow: 0 0 24px rgba(122,184,255,0.5); }
+  .overlay h1 { font-size: clamp(2rem, 7vw, 3.2rem); font-weight: 800; letter-spacing: 0.18em; color: var(--tk-primary); text-shadow: 0 0 24px rgba(122,184,255,0.5); }
   .overlay p { opacity: 0.85; font-size: 0.9rem; letter-spacing: 0.1em; line-height: 2; padding: 0 1.5rem; }
-  .overlay .result { font-size: clamp(3rem, 11vw, 5rem); font-weight: 800; line-height: 1; color: #7ab8ff; }
+  .overlay .result { font-size: clamp(3rem, 11vw, 5rem); font-weight: 800; line-height: 1; color: var(--tk-primary); }
   .btn {
     pointer-events: auto; cursor: pointer; font-family: inherit;
-    background: #7ab8ff; color: #0e1220; border: none; border-radius: 999px;
+    background: var(--tk-primary); color: var(--tk-background); border: none; border-radius: 999px;
     padding: 0.9rem 2.8rem; font-size: 1rem; font-weight: 800; letter-spacing: 0.2em;
     transition: transform 0.15s cubic-bezier(0.16,1,0.3,1), box-shadow 0.15s ease-out;
   }
@@ -63,6 +70,7 @@
 
 <script type="module">
 import * as THREE from 'three';
+import { initRenderPreset } from './lib/render-preset.mjs';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -71,6 +79,9 @@ document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0e1220);
+
+// T0: tone mapping / IBL / 影は lib/render-preset.mjs に委譲。brief.json の renderPreset が値の SoT。
+const renderPreset = await initRenderPreset(renderer, scene);
 
 const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 100);
 camera.position.set(0, 8.5, 8.5);
@@ -170,6 +181,7 @@ function startGame() {
   sequence = [];
   round = 0;
   state = 'idle';
+  renderPreset.onPlaying(key);
   nextRound();
 }
 

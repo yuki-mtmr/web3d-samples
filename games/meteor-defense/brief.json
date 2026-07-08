@@ -1,0 +1,30 @@
+{
+  "id": "B25",
+  "styleKeyword": "宇宙",
+  "palette": {
+    "primary": "#9fd8ff",
+    "accent": "#ffb35a",
+    "background": "#05060f",
+    "danger": "#ff5a20"
+  },
+  "mood": [
+    "宇宙",
+    "発光",
+    "星屑"
+  ],
+  "lighting": "月光の寒色環境光 + 迎撃弾/爆風の加算スプライトで暖色(炎)と寒色(迎撃)のコントラストを作る",
+  "prohibitions": [
+    "外部テクスチャ画像の使用",
+    "流星着弾時の爆発エフェクト省略",
+    "暖色(炎)と寒色(迎撃)のコントラストを崩す配色"
+  ],
+  "assetTier": "T1",
+  "cluster": "C3",
+  "renderPreset": {
+    "toneMapping": "acesfilmic",
+    "exposure": 0.95,
+    "envIntensity": 0.3,
+    "shadows": false,
+    "background": "procedural"
+  }
+}

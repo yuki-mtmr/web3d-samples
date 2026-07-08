@@ -9,9 +9,16 @@
 {"imports":{"three":"https://unpkg.com/three@0.185.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.185.0/examples/jsm/"}}
 </script>
 <style>
+  :root {
+    /* [THEME-TOKEN] brief.json の palette と一致させること(verify THEME 検査対象) */
+    --tk-primary: #4ade80;
+    --tk-accent: #ff2d8a;
+    --tk-background: #071410;
+    --tk-danger: #ff4d4d;
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Avenir Next', 'Hiragino Sans', sans-serif; }
-  body { background: #071410; touch-action: none; }
+  body { background: var(--tk-background); touch-action: none; }
   canvas { display: block; }
   .hud {
     position: fixed; top: 3vh; left: 0; right: 0; text-align: center;
@@ -61,6 +68,7 @@
 
 <script type="module">
 import * as THREE from 'three';
+import { initRenderPreset } from './lib/render-preset.mjs';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -68,8 +76,34 @@ renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x071410);
 scene.fog = new THREE.Fog(0x071410, 24, 50);
+
+// ---------- Wave2 StageB: ネオン俯瞰の背景/VFX 強化(手続き生成、tori-gate-run の手法を翻案) ----------
+// 背景: 深いグラデ空ではなく、盤面色を軸にした暗緑ネオンの放射ヴィネット + 走査線。
+// scene.background は fog の影響を受けないため、fog の減衰演出をしても背景の沈み込みは崩れない。
+function cyberBackgroundTexture() {
+  const w = 512, h = 512;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createRadialGradient(w / 2, h * 0.62, 0, w / 2, h * 0.62, w * 0.75);
+  grad.addColorStop(0, '#0d2b20');   // 中心: primary をわずかに滲ませた暗緑
+  grad.addColorStop(0.55, '#071410'); // background(brief と一致)
+  grad.addColorStop(1, '#030a07');    // 外周: さらに深い沈み込み
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = 'rgba(74,222,128,0.05)';
+  ctx.lineWidth = 1;
+  for (let y = 0; y < h; y += 6) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+scene.background = cyberBackgroundTexture();
+
+const renderPreset = await initRenderPreset(renderer, scene);
 
 const camera = new THREE.PerspectiveCamera(46, innerWidth / innerHeight, 0.1, 100);
 camera.position.set(0, 16.5, 10.5);
@@ -120,6 +154,125 @@ const toZ = (r) => (r - N / 2 + 0.5) * CELL;
   mk(L + 0.5, 0.25, 0, L/2 + 0.13);
   mk(0.25, L + 0.5, -L/2 - 0.13, 0);
   mk(0.25, L + 0.5, L/2 + 0.13, 0);
+}
+
+/* ---------- 外周グリッド地平線(draw call +1) ---------- */
+// 盤面外周に広がる発光グリッド床の拡張。fog(24-50)の減衰に任せて遠くへ消えるため
+// scene.background 同様に別テクスチャの水平線を描く必要がない(見下ろし構図の定石)。
+function horizonGridTexture() {
+  const size = 128;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  g.fillStyle = '#050f0c';
+  g.fillRect(0, 0, size, size);
+  g.strokeStyle = 'rgba(74,222,128,0.10)';
+  g.lineWidth = 1;
+  g.strokeRect(0.5, 0.5, size - 1, size - 1);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(30, 30);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const horizonFloor = new THREE.Mesh(
+  new THREE.PlaneGeometry(220, 220),
+  new THREE.MeshBasicMaterial({ map: horizonGridTexture() }),
+);
+horizonFloor.rotation.x = -Math.PI / 2;
+horizonFloor.position.y = -0.04; // 盤面床の直下、z-fight 回避
+scene.add(horizonFloor);
+
+/* ---------- 盤面下の放射グロー(draw call +1) ---------- */
+function boardGlowTexture() {
+  const size = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, 'rgba(74,222,128,0.35)');
+  grad.addColorStop(0.5, 'rgba(74,222,128,0.12)');
+  grad.addColorStop(1, 'rgba(74,222,128,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const boardGlow = new THREE.Mesh(
+  new THREE.PlaneGeometry(N * CELL * 2.2, N * CELL * 2.2),
+  new THREE.MeshBasicMaterial({
+    map: boardGlowTexture(), transparent: true, blending: THREE.AdditiveBlending,
+    depthWrite: false, fog: false,
+  }),
+);
+boardGlow.rotation.x = -Math.PI / 2;
+boardGlow.position.y = -0.02;
+scene.add(boardGlow);
+
+/* ---------- 微小な発光塵(THREE.Points、draw call +1) ---------- */
+// 演出専用の疑似乱数(seed 固定)。gameplay の Math.random とは分離し、bot 再現性に影響させない。
+function createDecoRng(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const decoRng = createDecoRng(280800);
+function dustSprite() {
+  const size = 64;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, 'rgba(216,255,232,1)');
+  grad.addColorStop(0.4, 'rgba(74,222,128,0.7)');
+  grad.addColorStop(1, 'rgba(74,222,128,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const DUST_COUNT = 140;
+const DUST_RANGE = N * CELL * 0.62;
+const DUST_Y_MIN = 0.2, DUST_Y_MAX = 4.2;
+const dustPositions = new Float32Array(DUST_COUNT * 3);
+const dustSpeeds = new Float32Array(DUST_COUNT);
+const dustPhase = new Float32Array(DUST_COUNT);
+for (let i = 0; i < DUST_COUNT; i++) {
+  dustPositions[i * 3] = (decoRng() * 2 - 1) * DUST_RANGE;
+  dustPositions[i * 3 + 1] = decoRng() * (DUST_Y_MAX - DUST_Y_MIN) + DUST_Y_MIN;
+  dustPositions[i * 3 + 2] = (decoRng() * 2 - 1) * DUST_RANGE;
+  dustSpeeds[i] = 0.15 + decoRng() * 0.25;
+  dustPhase[i] = decoRng() * Math.PI * 2;
+}
+const dustGeo = new THREE.BufferGeometry();
+dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
+const dustMat = new THREE.PointsMaterial({
+  map: dustSprite(), size: 0.12, transparent: true, opacity: 0.75,
+  blending: THREE.AdditiveBlending, depthWrite: false, color: 0x4ade80, sizeAttenuation: true,
+});
+const dust = new THREE.Points(dustGeo, dustMat);
+dust.frustumCulled = false;
+scene.add(dust);
+
+function updateDust(dt, elapsed) {
+  const pos = dustGeo.attributes.position.array;
+  for (let i = 0; i < DUST_COUNT; i++) {
+    const idx = i * 3;
+    pos[idx + 1] += dustSpeeds[i] * dt;
+    pos[idx] += Math.sin(elapsed * 0.5 + dustPhase[i]) * 0.08 * dt;
+    if (pos[idx + 1] > DUST_Y_MAX) {
+      pos[idx + 1] = DUST_Y_MIN;
+      pos[idx] = (decoRng() * 2 - 1) * DUST_RANGE;
+      pos[idx + 2] = (decoRng() * 2 - 1) * DUST_RANGE;
+    }
+  }
+  dustGeo.attributes.position.needsUpdate = true;
 }
 
 /* ---------- ヘビ ---------- */
@@ -287,11 +440,13 @@ document.getElementById('startBtn').addEventListener('click', () => {
   document.getElementById('overOverlay').classList.add('hidden');
   reset();
   playing = true;
+  renderPreset.onPlaying();
 });
 document.getElementById('retryBtn').addEventListener('click', () => {
   document.getElementById('overOverlay').classList.add('hidden');
   reset();
   playing = true;
+  renderPreset.onPlaying();
 });
 
 /* ---------- メインループ ---------- */
@@ -312,6 +467,7 @@ renderer.setAnimationLoop(() => {
   // 実の浮遊
   fruit.position.y = 0.34 + Math.sin(t * 3) * 0.08;
   fruit.rotation.y += dt * 2;
+  updateDust(dt, t);
 
   renderer.render(scene, camera);
   if (!ready) { console.log('[site] ready'); ready = true; }

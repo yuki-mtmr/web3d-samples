@@ -9,9 +9,16 @@
 {"imports":{"three":"https://unpkg.com/three@0.185.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.185.0/examples/jsm/"}}
 </script>
 <style>
+  :root {
+    /* [THEME-TOKEN] brief.json の palette と一致させること(verify THEME 検査対象) */
+    --tk-primary: #e8b04b;
+    --tk-accent: #4ade80;
+    --tk-background: #1a1410;
+    --tk-danger: #5e4023;
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Avenir Next', 'Hiragino Sans', sans-serif; }
-  body { background: #1a1410; touch-action: none; }
+  body { background: var(--tk-background); touch-action: none; }
   canvas { display: block; }
   .hud {
     position: fixed; top: 3vh; left: 0; right: 0; text-align: center;
@@ -29,17 +36,17 @@
   .overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
   .overlay h1 { font-size: clamp(2rem, 7vw, 3.2rem); font-weight: 800; letter-spacing: 0.12em; }
   .overlay p { opacity: 0.85; font-size: 0.9rem; letter-spacing: 0.1em; line-height: 2; padding: 0 1.5rem; }
-  .overlay .result { font-size: clamp(2.6rem, 10vw, 4.5rem); font-weight: 800; line-height: 1; color: #e8b04b; font-variant-numeric: tabular-nums; }
+  .overlay .result { font-size: clamp(2.6rem, 10vw, 4.5rem); font-weight: 800; line-height: 1; color: var(--tk-primary); font-variant-numeric: tabular-nums; }
   .btn {
     pointer-events: auto; cursor: pointer; font-family: inherit;
-    background: #e8b04b; color: #1a1410; border: none;
+    background: var(--tk-primary); color: var(--tk-background); border: none;
     border-radius: 999px; padding: 0.9rem 2.6rem; font-size: 1rem; font-weight: 700; letter-spacing: 0.2em;
     transition: transform 0.15s cubic-bezier(0.16,1,0.3,1), box-shadow 0.15s ease-out;
   }
   .btn:hover { transform: scale(1.05); box-shadow: 0 12px 32px rgba(232,176,75,0.35); }
   .toast {
     position: fixed; bottom: 6vh; left: 0; right: 0; text-align: center;
-    color: #e8b04b; font-weight: 700; letter-spacing: 0.3em; z-index: 10;
+    color: var(--tk-primary); font-weight: 700; letter-spacing: 0.3em; z-index: 10;
     opacity: 0; transition: opacity 0.4s ease; pointer-events: none;
   }
   .toast.show { opacity: 1; }
@@ -62,12 +69,13 @@
 <div class="overlay hidden" id="clearOverlay">
   <p>ALL LEVELS CLEAR — TOTAL TIME</p>
   <div class="result" id="result">0.0</div>
-  <p id="newBest" style="color:#e8b04b"></p>
+  <p id="newBest" style="color:var(--tk-primary)"></p>
   <button class="btn" id="retryBtn">AGAIN</button>
 </div>
 
 <script type="module">
 import * as THREE from 'three';
+import { initRenderPreset } from './lib/render-preset.mjs';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -78,6 +86,9 @@ document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1a1410);
+
+// T0: tone mapping / IBL / 影は lib/render-preset.mjs に委譲。brief.json の renderPreset が値の SoT。
+const renderPreset = await initRenderPreset(renderer, scene);
 
 const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 100);
 camera.position.set(0, 14.5, 7.5);
@@ -282,6 +293,7 @@ function startGame() {
   time = 0;
   startLevel(0);
   playing = true;
+  renderPreset.onPlaying(key);
 }
 
 function allClear() {

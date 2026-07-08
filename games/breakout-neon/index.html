@@ -9,9 +9,16 @@
 {"imports":{"three":"https://unpkg.com/three@0.185.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.185.0/examples/jsm/"}}
 </script>
 <style>
+  :root {
+    /* [THEME-TOKEN] brief.json palette 転記(変更不可) */
+    --tk-primary: #c79aff;
+    --tk-accent: #8affda;
+    --tk-background: #120a1c;
+    --tk-danger: #ff7ab8;
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Avenir Next', 'Hiragino Sans', sans-serif; }
-  body { background: #120a1c; touch-action: none; }
+  body { background: var(--tk-background); touch-action: none; }
   canvas { display: block; }
   .hud {
     position: fixed; top: 3vh; left: 0; right: 0; text-align: center;
@@ -63,6 +70,8 @@
 
 <script type="module">
 import * as THREE from 'three';
+import { initRenderPreset } from './lib/render-preset.mjs';
+import { createRng } from './lib/rng.mjs';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -70,7 +79,75 @@ renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x120a1c);
+
+// ---------- Wave2-B: 奥行きグリッド(トンネル風背景)+ 四隅ビネットグロー ----------
+// scene.background は fog の影響を受けず(このゲームは fog 未使用)、カメラ非追従の固定パースで
+// 「奥へ続くネオングリッド」の錯視を作る。draw call は背景クアッド分の +1 のみ(Color→Texture化)。
+// 演出専用の乱数(演出シード固定)。gameplay の rng とは別インスタンスで分離(principles.md #10)。
+function tunnelBackgroundTexture(seed) {
+  const w = 512, h = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const vpX = w * 0.5, vpY = h * 0.36; // 消失点: 奥(フィールド最奥)側にやや寄せる
+
+  // 基調グラデ: --tk-background を基準に消失点付近をわずかに明るく
+  const bgGrad = ctx.createRadialGradient(vpX, vpY, 0, vpX, vpY, w * 0.8);
+  bgGrad.addColorStop(0, '#1d1130');
+  bgGrad.addColorStop(0.55, '#160c24');
+  bgGrad.addColorStop(1, '#120a1c'); // --tk-background
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, w, h);
+
+  // トンネル風グリッド: 消失点へ収束する同心円 + 放射線(primary、低アルファ)
+  ctx.strokeStyle = 'rgba(199, 154, 255, 0.22)';
+  ctx.lineWidth = 1;
+  const rings = 7;
+  for (let i = 1; i <= rings; i += 1) {
+    const r = (w * 0.8) * (i / rings);
+    ctx.beginPath();
+    ctx.arc(vpX, vpY, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  const spokes = 16;
+  for (let i = 0; i < spokes; i += 1) {
+    const a = (i / spokes) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(vpX, vpY);
+    ctx.lineTo(vpX + Math.cos(a) * w, vpY + Math.sin(a) * w);
+    ctx.stroke();
+  }
+
+  // 都市夜景の遠光(mood: 都市夜景): accent の微小な点在光を決定論的乱数で散らす
+  const cityRng = createRng(seed);
+  for (let i = 0; i < 90; i += 1) {
+    const x = cityRng.next() * w;
+    const y = vpY + cityRng.next() * (h - vpY);
+    const r = cityRng.range(0.5, 1.6);
+    const a = cityRng.range(0.15, 0.5);
+    ctx.fillStyle = `rgba(138, 255, 218, ${a})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 四隅ビネットグロー(accent、淡い発光)
+  for (const [cx, cy] of [[0, 0], [w, 0], [0, h], [w, h]]) {
+    const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, w * 0.42);
+    glow.addColorStop(0, 'rgba(138, 255, 218, 0.16)');
+    glow.addColorStop(1, 'rgba(138, 255, 218, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+scene.background = tunnelBackgroundTexture(6601);
+
+// T0: tone mapping / IBL / 影は lib/render-preset.mjs に委譲。brief.json の renderPreset が値の SoT。
+const renderPreset = await initRenderPreset(renderer, scene);
 
 // 正面やや上からの視点（フィールドは xz 平面）
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
@@ -120,6 +197,49 @@ const ball = new THREE.Mesh(
 );
 scene.add(ball);
 let bvx = 0, bvz = 0, ballStuck = true;
+
+/* ---------- ボール軌跡の残光(視覚のみ、物理不変) ---------- */
+// THREE.Points 1 本(draw call +1)。vertexColors の明度を年齢で減衰させ、
+// AdditiveBlending + depthWrite:false で「残光」に見せる(per-vertex alpha は使わない簡易手法)。
+const TRAIL_LEN = 18;
+const trailGeo = new THREE.BufferGeometry();
+const trailPos = new Float32Array(TRAIL_LEN * 3);
+const trailCol = new Float32Array(TRAIL_LEN * 3);
+trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
+trailGeo.setAttribute('color', new THREE.BufferAttribute(trailCol, 3));
+const trailMat = new THREE.PointsMaterial({
+  size: 0.2, vertexColors: true, transparent: true, opacity: 0.9,
+  blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true,
+});
+const trailPoints = new THREE.Points(trailGeo, trailMat);
+trailPoints.frustumCulled = false;
+scene.add(trailPoints);
+const trailHistory = [];
+const trailColorBase = new THREE.Color(0x8affda); // accent(brief.json 準拠)
+function updateTrail() {
+  if (playing && !ballStuck) {
+    trailHistory.unshift({ x: ball.position.x, y: ball.position.y, z: ball.position.z });
+    if (trailHistory.length > TRAIL_LEN) trailHistory.pop();
+  } else if (trailHistory.length) {
+    trailHistory.pop(); // 停止中/未入場は末尾から縮めて自然にフェードアウト
+  }
+  for (let i = 0; i < TRAIL_LEN; i += 1) {
+    const p = trailHistory[i];
+    if (p) {
+      trailPos[i * 3] = p.x; trailPos[i * 3 + 1] = p.y; trailPos[i * 3 + 2] = p.z;
+      const t = 1 - i / TRAIL_LEN;
+      const fade = t * t;
+      trailCol[i * 3] = trailColorBase.r * fade;
+      trailCol[i * 3 + 1] = trailColorBase.g * fade;
+      trailCol[i * 3 + 2] = trailColorBase.b * fade;
+    } else {
+      trailPos[i * 3] = 0; trailPos[i * 3 + 1] = -100; trailPos[i * 3 + 2] = 0;
+      trailCol[i * 3] = 0; trailCol[i * 3 + 1] = 0; trailCol[i * 3 + 2] = 0;
+    }
+  }
+  trailGeo.attributes.position.needsUpdate = true;
+  trailGeo.attributes.color.needsUpdate = true;
+}
 
 /* ---------- ブロック ---------- */
 const BRICK_COLS = 8, BRICK_W = 1.35, BRICK_D = 0.7;
@@ -255,11 +375,13 @@ document.getElementById('startBtn').addEventListener('click', () => {
   document.getElementById('overOverlay').classList.add('hidden');
   reset();
   playing = true;
+  renderPreset.onPlaying(key);
 });
 document.getElementById('retryBtn').addEventListener('click', () => {
   document.getElementById('overOverlay').classList.add('hidden');
   reset();
   playing = true;
+  renderPreset.onPlaying(key);
 });
 
 /* ---------- メインループ ---------- */
@@ -366,6 +488,8 @@ renderer.setAnimationLoop(() => {
       bursts.splice(i, 1);
     }
   }
+
+  updateTrail();
 
   renderer.render(scene, camera);
   if (!ready) { console.log('[site] ready'); ready = true; }

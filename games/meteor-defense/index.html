@@ -9,13 +9,20 @@
 {"imports":{"three":"https://unpkg.com/three@0.185.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.185.0/examples/jsm/"}}
 </script>
 <style>
+  :root {
+    /* [THEME-TOKEN] brief.json palette と一致(sites/games/meteor-defense/brief.json) */
+    --tk-primary: #9fd8ff;
+    --tk-accent: #ffb35a;
+    --tk-background: #05060f;
+    --tk-danger: #ff5a20;
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'SF Mono', 'Menlo', monospace; }
-  body { background: #05060f; touch-action: none; cursor: crosshair; }
+  body { background: var(--tk-background); touch-action: none; cursor: crosshair; }
   canvas { display: block; }
   .hud {
     position: fixed; top: 2.5vh; left: 0; right: 0; text-align: center;
-    color: #9fd8ff; pointer-events: none; z-index: 10; text-transform: uppercase;
+    color: var(--tk-primary); pointer-events: none; z-index: 10; text-transform: uppercase;
   }
   .score { font-size: clamp(2rem, 6vw, 3.2rem); font-weight: 700; letter-spacing: 0.1em; text-shadow: 0 0 16px rgba(90, 180, 255, 0.6); }
   .wave { font-size: 0.8rem; letter-spacing: 0.35em; opacity: 0.7; }
@@ -28,15 +35,15 @@
   .overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
   .overlay h1 { font-size: clamp(1.8rem, 6.5vw, 3rem); letter-spacing: 0.25em; text-shadow: 0 0 24px rgba(90,180,255,0.8); }
   .overlay p { opacity: 0.85; font-size: 0.85rem; letter-spacing: 0.12em; line-height: 2; padding: 0 1.5rem; }
-  .overlay .result { font-size: clamp(3rem, 11vw, 5rem); font-weight: 700; line-height: 1; color: #ffb35a; }
+  .overlay .result { font-size: clamp(3rem, 11vw, 5rem); font-weight: 700; line-height: 1; color: var(--tk-accent); }
   .btn {
     pointer-events: auto; cursor: pointer; font-family: inherit;
-    background: transparent; color: #9fd8ff; border: 1px solid #9fd8ff;
+    background: transparent; color: var(--tk-primary); border: 1px solid var(--tk-primary);
     border-radius: 4px; padding: 0.85rem 2.6rem; font-size: 0.95rem; letter-spacing: 0.3em;
     text-transform: uppercase;
     transition: transform 0.15s cubic-bezier(0.16,1,0.3,1), background 0.15s ease-out, color 0.15s ease-out;
   }
-  .btn:hover { transform: scale(1.05); background: #9fd8ff; color: #05060f; }
+  .btn:hover { transform: scale(1.05); background: var(--tk-primary); color: var(--tk-background); }
 </style>
 </head>
 <body>
@@ -60,16 +67,55 @@
 
 <script type="module">
 import * as THREE from 'three';
+import { initRenderPreset } from './lib/render-preset.mjs';
+import { createFSM } from './lib/fsm.mjs';
+import { createGameHook } from './lib/game-hook.mjs';
+import { createRendererInfo } from './lib/render-info.mjs';
+import { createRng } from './lib/rng.mjs';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x05060f);
 scene.fog = new THREE.Fog(0x05060f, 40, 90);
+
+/* ---------- 背景: 星空 scene.background(CanvasTexture、fog の影響を受けない) ----------
+   演出専用の rng(gameplay の Math.random() とは分離、seed 固定で決定論化)。
+   draw call を増やさず(background texture は描画コスト+0)既存 Points 星屑(300 点)に
+   加えて密度を底上げする。 */
+function skyTexture(seed) {
+  const w = 512, h = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, '#02030a');       // 天頂: --tk-background よりさらに深い藍
+  grad.addColorStop(0.6, '#05060f');     // --tk-background と一致させる中間帯
+  grad.addColorStop(1, '#0c1020');       // 地平線際はわずかに明るく霞ませる
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+
+  const starRng = createRng(seed);
+  for (let i = 0; i < 420; i += 1) {
+    const x = starRng.next() * w;
+    const y = starRng.next() * h * 0.72; // 地平線より上のみ
+    const r = starRng.range(0.35, 1.3);
+    const a = starRng.range(0.2, 0.9);
+    ctx.fillStyle = `rgba(255, 255, 255, ${a})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+scene.background = skyTexture(9001);
+
+// T0: tone mapping / IBL / 影は lib/render-preset.mjs に委譲。brief.json の renderPreset が値の SoT。
+const renderPreset = await initRenderPreset(renderer, scene);
 
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 200);
 camera.position.set(0, 6, 26);
@@ -126,6 +172,22 @@ function glowTexture(inner, outer) {
 const fireGlow = glowTexture('rgba(255,230,180,1)', 'rgba(255,120,40,0.5)');
 const blueGlow = glowTexture('rgba(220,240,255,1)', 'rgba(90,180,255,0.5)');
 
+/* ---------- 流星痕の微発光テクスチャ(火球本体/爆風のグローより小さく淡い) ---------- */
+function trailGlowTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(32, 32, 1, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255, 210, 150, 0.9)');
+  grad.addColorStop(0.5, 'rgba(255, 179, 90, 0.35)');
+  grad.addColorStop(1, 'rgba(255, 179, 90, 0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 /* ---------- 街 ---------- */
 const buildings = [];  // { mesh, alive, x, h }
 {
@@ -171,6 +233,48 @@ const buildings = [];  // { mesh, alive, x, h }
   scene.add(ground);
 }
 
+/* ---------- 地平線の街明かりグロー帯 ----------
+   街並みの奥、地平線に沿って水平グラデーションの発光帯を Canvas2D で焼き込み、
+   accent(暖色の窓明かり)を淡く滲ませる。scene.background と同様 fog:false で奥行きの
+   霞みに埋もれさせず、AdditiveBlending + depthWrite:false の遠景レイヤーとして 1 draw call で追加。 */
+function horizonGlowTexture() {
+  const w = 512, h = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const band = ctx.createLinearGradient(0, 0, 0, h);
+  band.addColorStop(0, 'rgba(255, 179, 90, 0)');
+  band.addColorStop(0.55, 'rgba(255, 179, 90, 0.28)');
+  band.addColorStop(0.82, 'rgba(255, 179, 90, 0.5)');
+  band.addColorStop(1, 'rgba(255, 179, 90, 0)');
+  ctx.fillStyle = band;
+  ctx.fillRect(0, 0, w, h);
+  // 建物の窓明かりを思わせる横方向のムラ(演出専用 rng、seed 固定)
+  const glowRng = createRng(5210);
+  for (let i = 0; i < 60; i += 1) {
+    const x = glowRng.next() * w;
+    const y = h * (0.6 + glowRng.next() * 0.35);
+    const r = glowRng.range(3, 9);
+    const a = glowRng.range(0.15, 0.4);
+    ctx.fillStyle = `rgba(255, 217, 160, ${a})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const horizonGlow = new THREE.Mesh(
+  new THREE.PlaneGeometry(90, 7),
+  new THREE.MeshBasicMaterial({
+    map: horizonGlowTexture(), transparent: true, blending: THREE.AdditiveBlending,
+    depthWrite: false, fog: false,
+  }),
+);
+horizonGlow.position.set(0, 1.4, -0.4);
+scene.add(horizonGlow);
+
 /* ---------- 星 ---------- */
 {
   const n = 300, pos = new Float32Array(n * 3);
@@ -184,6 +288,32 @@ const buildings = [];  // { mesh, alive, x, h }
   scene.add(new THREE.Points(geo, new THREE.PointsMaterial({
     size: 0.14, color: 0xcdd8ff, transparent: true, opacity: 0.75, fog: false,
   })));
+}
+
+/* ---------- 流星痕の微発光 Points(1 draw call の共有リングバッファ) ----------
+   各流星の落下軌跡に沿って淡い発光点を刻む「痕」表現。演出専用 rng(gameplay と分離、seed 固定)で
+   軌道に僅かなジッタを与える。固定プールをリングバッファとして使い回すため、流星数に関わらず draw call は+1のまま。 */
+const TRAIL_POOL = 220;
+const trailRng = createRng(6402);
+const trailPositions = new Float32Array(TRAIL_POOL * 3);
+for (let i = 0; i < TRAIL_POOL; i += 1) trailPositions[i * 3 + 1] = -999; // 初期状態は画面外
+let trailCursor = 0;
+const trailGeo = new THREE.BufferGeometry();
+trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
+const meteorTrails = new THREE.Points(trailGeo, new THREE.PointsMaterial({
+  map: trailGlowTexture(), size: 0.5, color: 0xffb35a, transparent: true, opacity: 0.4,
+  blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, fog: false,
+}));
+meteorTrails.frustumCulled = false;
+scene.add(meteorTrails);
+
+function emitMeteorTrail(pos) {
+  const idx = trailCursor;
+  trailPositions[idx * 3] = pos.x + trailRng.range(-0.15, 0.15);
+  trailPositions[idx * 3 + 1] = pos.y + trailRng.range(-0.15, 0.15);
+  trailPositions[idx * 3 + 2] = pos.z;
+  trailCursor = (trailCursor + 1) % TRAIL_POOL;
+  trailGeo.attributes.position.needsUpdate = true;
 }
 
 /* ---------- ゲームオブジェクト ---------- */
@@ -230,8 +360,10 @@ function explode(pos, maxR = 3.2, blue = true) {
 }
 
 /* ---------- ゲーム状態 ---------- */
-let playing = false;
-let score = 0, wave = 1, waveT = 0, spawnT = 0;
+// 検証フック契約 v2(docs/contracts/game-hook.d.ts): score は progressFields で公開する
+// 進行フィールドのため state オブジェクトに保持する。wave 等の内部変数は従来どおり。
+const state = { score: 0 };
+let wave = 1, waveT = 0, spawnT = 0;
 
 const scoreEl = document.getElementById('score');
 const waveEl = document.getElementById('wave');
@@ -250,7 +382,9 @@ function reset() {
     b.mesh.visible = true;
     b.mesh.material.emissiveIntensity = 0.85;   // 生成時と同じ明るさに戻す
   }
-  score = 0; wave = 1; waveT = 0; spawnT = 1;
+  for (let i = 0; i < TRAIL_POOL; i += 1) trailPositions[i * 3 + 1] = -999; // 流星痕をリセット
+  trailGeo.attributes.position.needsUpdate = true;
+  state.score = 0; wave = 1; waveT = 0; spawnT = 1;
   scoreEl.textContent = '0';
   waveEl.textContent = 'WAVE 1';
 }
@@ -258,15 +392,7 @@ function reset() {
 function cityCount() { return buildings.filter(b => b.alive).length; }
 
 function gameOver() {
-  playing = false;
-  document.getElementById('result').textContent = score;
-  const nb = document.getElementById('newBest');
-  if (score > best) {
-    best = score;
-    localStorage.setItem(BEST_KEY, best);
-    nb.textContent = '★ NEW RECORD ★';
-  } else nb.textContent = '';
-  setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 800);
+  fsm.transition('gameover');
 }
 
 /* ---------- 入力: クリック地点へ迎撃弾 ---------- */
@@ -278,7 +404,7 @@ const LAUNCH_POS = new THREE.Vector3(0, 1.2, 0);
 
 addEventListener('pointerdown', (e) => {
   if (e.target && e.target.closest && e.target.closest('button')) return;
-  if (!playing) return;
+  if (!fsm.is('playing')) return;
   ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
   if (!raycaster.ray.intersectPlane(firePlane, aim)) return;
@@ -298,16 +424,37 @@ addEventListener('pointerdown', (e) => {
   launchSfx();
 });
 
-document.getElementById('startBtn').addEventListener('click', () => {
-  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
-  document.getElementById('titleOverlay').classList.add('hidden');
-  reset();
-  playing = true;
-});
-document.getElementById('retryBtn').addEventListener('click', () => {
-  document.getElementById('overOverlay').classList.add('hidden');
-  reset();
-  playing = true;
+// ---------- FSM (docs/contracts/game-hook.d.ts 準拠) ----------
+const fsm = createFSM({
+  title: {
+    exit: () => { document.getElementById('titleOverlay').classList.add('hidden'); if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); },
+  },
+  playing: {
+    enter: () => { reset(); renderPreset.onPlaying(moon); },
+  },
+  gameover: {
+    enter: () => {
+      document.getElementById('result').textContent = state.score;
+      const nb = document.getElementById('newBest');
+      if (state.score > best) {
+        best = state.score;
+        localStorage.setItem(BEST_KEY, best);
+        nb.textContent = '★ NEW RECORD ★';
+      } else nb.textContent = '';
+      setTimeout(() => document.getElementById('overOverlay').classList.remove('hidden'), 800);
+    },
+    exit: () => document.getElementById('overOverlay').classList.add('hidden'),
+  },
+}, 'title');
+
+document.getElementById('startBtn').addEventListener('click', () => fsm.transition('playing'));
+document.getElementById('retryBtn').addEventListener('click', () => fsm.transition('playing'));
+// 実導線: キーボードでも開始/リスタートできること(verify N1)
+addEventListener('keydown', (e) => {
+  if ((e.code === 'Space' || e.code === 'Enter') && (fsm.is('title') || fsm.is('gameover'))) {
+    e.preventDefault();
+    fsm.transition('playing');
+  }
 });
 
 /* ---------- メインループ ---------- */
@@ -317,7 +464,7 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   const t = clock.elapsedTime;
 
-  if (playing) {
+  if (fsm.is('playing')) {
     // ウェーブ進行
     waveT += dt;
     if (waveT > 22) { waveT = 0; wave++; waveEl.textContent = `WAVE ${wave}`; }
@@ -331,6 +478,8 @@ renderer.setAnimationLoop(() => {
       const m = meteors[i];
       m.group.position.addScaledVector(m.vel, dt);
       m.rock.rotation.x += dt * 3; m.rock.rotation.y += dt * 2;
+      m.trailT = (m.trailT || 0) - dt;
+      if (m.trailT <= 0) { m.trailT = 0.05; emitMeteorTrail(m.group.position); }
       if (m.group.position.y <= 0.4) {
         // 着弾 — 最寄りの建物を破壊
         explode(m.group.position, 3.6, false);
@@ -370,8 +519,8 @@ renderer.setAnimationLoop(() => {
           explode(meteors[i].group.position, 2.2, false);
           scene.remove(meteors[i].group);
           meteors.splice(i, 1);
-          score += 10 * wave;
-          scoreEl.textContent = score;
+          state.score += 10 * wave;
+          scoreEl.textContent = state.score;
         }
       }
     }
@@ -399,6 +548,14 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+});
+
+// 検証パイプライン用フック v2(docs/contracts/game-hook.d.ts)
+window.__GAME__ = createGameHook({
+  fsm,
+  state,
+  rendererInfo: createRendererInfo(renderer),
+  progressFields: ['score'],
 });
 </script>
 </body>

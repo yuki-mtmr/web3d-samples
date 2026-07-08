@@ -1,0 +1,30 @@
+{
+  "id": "B22",
+  "styleKeyword": "和風",
+  "palette": {
+    "primary": "#d83a2a",
+    "accent": "#e8b04b",
+    "background": "#10222e",
+    "danger": "#ff3a3a"
+  },
+  "mood": [
+    "和風",
+    "縁日",
+    "水中光条"
+  ],
+  "lighting": "アンビエント寒色 + 暖色ディレクショナルで水面と紙ポイを照らす柔らかい縁日光",
+  "prohibitions": [
+    "外部テクスチャ画像の使用",
+    "ポイの紙が水と同化する低コントラスト配色",
+    "寒色ネオンへの逸脱"
+  ],
+  "assetTier": "T1",
+  "cluster": "C2",
+  "renderPreset": {
+    "toneMapping": "acesfilmic",
+    "exposure": 1.0,
+    "envIntensity": 0,
+    "shadows": false,
+    "background": "procedural"
+  }
+}

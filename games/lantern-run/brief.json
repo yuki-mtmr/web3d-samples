@@ -1,0 +1,30 @@
+{
+  "id": "B23",
+  "styleKeyword": "和風",
+  "palette": {
+    "primary": "#c22a18",
+    "accent": "#ff9a4d",
+    "background": "#0a0716",
+    "danger": "#e0432d"
+  },
+  "mood": [
+    "和風",
+    "提灯灯り",
+    "発光"
+  ],
+  "lighting": "橙のポイント光が火の玉を追い、宵闇の環境光(紫がかった暗色)と霧が奥行きを詰める",
+  "prohibitions": [
+    "外部テクスチャ画像の使用",
+    "鳥居ゲートが背景に埋没する配色",
+    "寒色ネオンへの逸脱"
+  ],
+  "assetTier": "T1",
+  "cluster": "C1",
+  "renderPreset": {
+    "toneMapping": "acesfilmic",
+    "exposure": 1.0,
+    "envIntensity": 0.3,
+    "shadows": false,
+    "background": "procedural"
+  }
+}

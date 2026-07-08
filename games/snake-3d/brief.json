@@ -1,0 +1,29 @@
+{
+  "id": "B28",
+  "styleKeyword": "ネオン",
+  "palette": {
+    "primary": "#4ade80",
+    "accent": "#ff2d8a",
+    "background": "#071410",
+    "danger": "#ff4d4d"
+  },
+  "mood": [
+    "高彩度",
+    "発光"
+  ],
+  "lighting": "淡緑 AmbientLight + 白色 DirectionalLight。ヘビ頭部・外周枠・実は emissive で発光を強調",
+  "prohibitions": [
+    "外部テクスチャ画像の使用",
+    "背景を暗緑系ネオンから外れた配色にすること",
+    "ヘビ・フルーツの emissive 発光を落とした低彩度表現"
+  ],
+  "assetTier": "T1",
+  "cluster": "C1",
+  "renderPreset": {
+    "toneMapping": "neutral",
+    "exposure": 0.9,
+    "envIntensity": 0.3,
+    "shadows": false,
+    "background": "procedural"
+  }
+}

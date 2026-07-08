@@ -9,9 +9,16 @@
 {"imports":{"three":"https://unpkg.com/three@0.185.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.185.0/examples/jsm/"}}
 </script>
 <style>
+  :root {
+    /* [THEME-TOKEN] brief.json の palette と一致させること(verify THEME 検査対象) */
+    --tk-primary: #399ed0;
+    --tk-accent: #ffd24a;
+    --tk-background: #12141f;
+    --tk-danger: #ff5a3c;
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Avenir Next', 'Hiragino Sans', sans-serif; }
-  body { background: #12141f; touch-action: none; }
+  body { background: var(--tk-background); touch-action: none; }
   canvas { display: block; }
   .hud {
     position: fixed; top: 4vh; left: 0; right: 0;
@@ -59,6 +66,8 @@
 
 <script type="module">
 import * as THREE from 'three';
+import { initRenderPreset } from './lib/render-preset.mjs';
+import { createRng } from './lib/rng.mjs';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -66,8 +75,123 @@ renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x12141f);
 scene.fog = new THREE.Fog(0x12141f, 30, 70);
+
+/* ---------- Wave2-B: ネオンシティ背景(手続き生成、draw call +3) ---------- */
+// 演出専用 rng(gameplay の Math.random() とは分離、seed 固定で決定論的)
+const bgRng = createRng(29001);
+
+// 夜空グラデ(scene.background、fog の影響を受けない固定描画)
+function skyTexture() {
+  const w = 256, h = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, '#0b0d17');   // 天頂: background よりわずかに深い藍(黒潰れ回避で完全な黒は使わない)
+  grad.addColorStop(0.55, '#12141f'); // --tk-background と一致
+  grad.addColorStop(1, '#1d3350');   // 地平線際: primary(#399ed0)を溶かしたシティグロー
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+
+  // 地平線の発光帯(primary を低アルファで滲ませる、ネオンの遠景反射光)
+  const glow = ctx.createRadialGradient(w / 2, h * 0.92, 0, w / 2, h * 0.92, w * 0.7);
+  glow.addColorStop(0, 'rgba(57, 158, 208, 0.28)');
+  glow.addColorStop(1, 'rgba(57, 158, 208, 0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, w, h);
+
+  // 星(まばら、accent の微光点。mood=ミニマルのため密度は控えめ)
+  const starRng = createRng(29002);
+  for (let i = 0; i < 60; i += 1) {
+    const x = starRng.next() * w;
+    const y = starRng.next() * h * 0.5;
+    const r = starRng.range(0.4, 1.1);
+    ctx.fillStyle = `rgba(255, 210, 74, ${starRng.range(0.2, 0.6)})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+scene.background = skyTexture();
+
+// シティスカイライン・シルエット層(矩形ビル群 + 窓の点灯ドット、fbm は使わない)
+function citySilhouetteTexture(seed, { buildingColor, windowColor, minH, maxH, density, alpha }) {
+  const w = 768, h = 320;
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  const rng = createRng(seed);
+  const baseline = h; // ビルは画面下端から積み上がる
+  let x = -20;
+  while (x < w + 20) {
+    const bw = rng.range(34, 74);
+    const bh = rng.range(minH, maxH) * h;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = buildingColor;
+    ctx.fillRect(x, baseline - bh, bw, bh);
+
+    // 窓の点灯ドット(格子状に配置し確率で点灯)
+    ctx.globalAlpha = 1;
+    const cols = Math.max(1, Math.floor(bw / 9));
+    const rows = Math.max(1, Math.floor(bh / 11));
+    for (let cy = 0; cy < rows; cy += 1) {
+      for (let cx = 0; cx < cols; cx += 1) {
+        if (rng.next() > density) continue;
+        const wx = x + 4 + cx * 9;
+        const wy = baseline - bh + 5 + cy * 11;
+        ctx.fillStyle = windowColor;
+        ctx.globalAlpha = rng.range(0.35, 0.9);
+        ctx.fillRect(wx, wy, 3, 4);
+      }
+    }
+    x += bw + rng.range(6, 18);
+  }
+  ctx.globalAlpha = 1;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const NDIR = new THREE.Vector3(-1, -1, -1).normalize(); // カメラ→原点の固定視線方向
+const bgLayers = [];
+function makeCityLayer(seed, dist, factor, opts, planeSize) {
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(planeSize[0], planeSize[1]),
+    new THREE.MeshBasicMaterial({
+      map: citySilhouetteTexture(seed, opts),
+      transparent: true, fog: false, depthWrite: false,
+    }),
+  );
+  const baseY = NDIR.y * dist;
+  mesh.userData.base = new THREE.Vector3(NDIR.x * dist, baseY, NDIR.z * dist);
+  mesh.userData.factor = factor; // カメラ上昇に対するパララックス係数(< 1 で「僅かに下へ」ずれて見える)
+  scene.add(mesh);
+  bgLayers.push(mesh);
+  return mesh;
+}
+// 遠層: 淡く低コントラスト、窓は控えめ
+makeCityLayer(4401, 46, 0.22, {
+  buildingColor: '#1d3350', windowColor: '#ffd24a', minH: 0.22, maxH: 0.5, density: 0.05, alpha: 0.55,
+}, [56, 30]);
+// 近層: 濃色でくっきり、窓多め(primary/accent 混在)
+makeCityLayer(4402, 34, 0.4, {
+  buildingColor: '#0b0d17', windowColor: '#399ed0', minH: 0.32, maxH: 0.68, density: 0.1, alpha: 0.92,
+}, [50, 26]);
+
+function updateBackdrop(camY) {
+  for (const mesh of bgLayers) {
+    const b = mesh.userData.base;
+    mesh.position.set(b.x, b.y + camY * mesh.userData.factor, b.z);
+    mesh.lookAt(camera.position);
+  }
+}
+
+const renderPreset = await initRenderPreset(renderer, scene);
 
 // 等角気味の見下ろしカメラ
 const camera = new THREE.OrthographicCamera();
@@ -252,11 +376,13 @@ document.getElementById('startBtn').addEventListener('click', () => {
   document.getElementById('titleOverlay').classList.add('hidden');
   reset();
   playing = true;
+  renderPreset.onPlaying();
 });
 document.getElementById('retryBtn').addEventListener('click', () => {
   document.getElementById('overOverlay').classList.add('hidden');
   reset();
   playing = true;
+  renderPreset.onPlaying();
 });
 
 /* ---------- メインループ ---------- */
@@ -290,6 +416,7 @@ renderer.setAnimationLoop(() => {
   const targetY = Math.max(0, (stack.length - 1) * BLOCK_H - BLOCK_H);
   camY += (targetY - camY) * 0.08;
   setCamera(camY);
+  updateBackdrop(camY);
 
   renderer.render(scene, camera);
   if (!ready) { console.log('[site] ready'); ready = true; }

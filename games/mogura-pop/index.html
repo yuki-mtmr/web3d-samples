@@ -9,17 +9,24 @@
 {"imports":{"three":"https://unpkg.com/three@0.185.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.185.0/examples/jsm/"}}
 </script>
 <style>
+  :root {
+    /* [THEME-TOKEN] brief.json の palette と一致させること(verify THEME 検査対象) */
+    --tk-primary: #ffd24a;
+    --tk-accent: #8affda;
+    --tk-background: #241a10;
+    --tk-danger: #ff6a20;
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Hiragino Sans', 'Avenir Next', sans-serif; }
-  body { background: #241a10; touch-action: none; }
+  body { background: var(--tk-background); touch-action: none; }
   canvas { display: block; }
   .hud {
     position: fixed; top: 3vh; left: 0; right: 0; text-align: center;
     color: #f5ecd8; pointer-events: none; z-index: 10;
   }
   .score { font-size: clamp(2rem, 6vw, 3rem); font-weight: 800; font-variant-numeric: tabular-nums; }
-  .timer { font-size: 1.15rem; font-weight: 700; color: #ffd24a; font-variant-numeric: tabular-nums; }
-  .combo { font-size: 0.85rem; letter-spacing: 0.25em; color: #8affda; min-height: 1.3em; }
+  .timer { font-size: 1.15rem; font-weight: 700; color: var(--tk-primary); font-variant-numeric: tabular-nums; }
+  .combo { font-size: 0.85rem; letter-spacing: 0.25em; color: var(--tk-accent); min-height: 1.3em; }
   .overlay {
     position: fixed; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 1.1rem;
@@ -28,12 +35,12 @@
     transition: opacity 0.3s ease, visibility 0.3s; text-align: center;
   }
   .overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
-  .overlay h1 { font-size: clamp(2rem, 7vw, 3.2rem); font-weight: 800; letter-spacing: 0.15em; color: #ffd24a; }
+  .overlay h1 { font-size: clamp(2rem, 7vw, 3.2rem); font-weight: 800; letter-spacing: 0.15em; color: var(--tk-primary); }
   .overlay p { opacity: 0.85; font-size: 0.9rem; letter-spacing: 0.08em; line-height: 2; padding: 0 1.5rem; }
-  .overlay .result { font-size: clamp(3rem, 11vw, 5rem); font-weight: 800; line-height: 1; color: #ffd24a; }
+  .overlay .result { font-size: clamp(3rem, 11vw, 5rem); font-weight: 800; line-height: 1; color: var(--tk-primary); }
   .btn {
     pointer-events: auto; cursor: pointer; font-family: inherit;
-    background: #ffd24a; color: #241a10; border: none; border-radius: 999px;
+    background: var(--tk-primary); color: var(--tk-background); border: none; border-radius: 999px;
     padding: 0.9rem 2.8rem; font-size: 1rem; font-weight: 800; letter-spacing: 0.2em;
     transition: transform 0.15s cubic-bezier(0.16,1,0.3,1), box-shadow 0.15s ease-out;
   }
@@ -63,6 +70,7 @@
 
 <script type="module">
 import * as THREE from 'three';
+import { initRenderPreset } from './lib/render-preset.mjs';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -71,6 +79,8 @@ document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x241a10);
+
+const renderPreset = await initRenderPreset(renderer, scene);
 
 const camera = new THREE.PerspectiveCamera(44, innerWidth / innerHeight, 0.1, 100);
 camera.position.set(0, 8.2, 7.2);
@@ -309,11 +319,13 @@ document.getElementById('startBtn').addEventListener('click', () => {
   document.getElementById('overOverlay').classList.add('hidden');
   reset();
   playing = true;
+  renderPreset.onPlaying();
 });
 document.getElementById('retryBtn').addEventListener('click', () => {
   document.getElementById('overOverlay').classList.add('hidden');
   reset();
   playing = true;
+  renderPreset.onPlaying();
 });
 
 /* ---------- メインループ ---------- */

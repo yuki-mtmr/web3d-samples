@@ -1,0 +1,29 @@
+{
+  "id": "B26",
+  "styleKeyword": "和風",
+  "palette": {
+    "primary": "#ffd24a",
+    "accent": "#8affda",
+    "background": "#241a10",
+    "danger": "#ff6a20"
+  },
+  "mood": [
+    "縁日",
+    "高彩度"
+  ],
+  "lighting": "暖色アンビエント + 上方ディレクショナルで土の縁日ステージを照らし、金モグラのみ emissive で発光させる",
+  "prohibitions": [
+    "外部テクスチャ画像の使用",
+    "土台や穴の彩度を落として地味にする配色",
+    "冷色系ネオンへの逸脱"
+  ],
+  "assetTier": "T1",
+  "cluster": "C3",
+  "renderPreset": {
+    "toneMapping": "neutral",
+    "exposure": 1.0,
+    "envIntensity": 0.3,
+    "shadows": false,
+    "background": "procedural"
+  }
+}
