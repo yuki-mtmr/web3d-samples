@@ -19,5 +19,12 @@
     "低コントラストな HUD"
   ],
   "assetTier": "T0",
-  "cluster": "C2"
+  "cluster": "C2",
+  "renderPreset": {
+    "toneMapping": "neutral",
+    "exposure": 1.0,
+    "envIntensity": 0.25,
+    "shadows": false,
+    "background": "procedural"
+  }
 }

@@ -49,7 +49,7 @@
     cursor: pointer; background: none; border: none; color: var(--fg); }
 </style>
 <script type="importmap">
-  { "imports": { "three": "https://unpkg.com/three@0.185.0/build/three.module.js" } }
+  { "imports": { "three": "https://unpkg.com/three@0.185.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.185.0/examples/jsm/" } }
 </script>
 </head>
 <body>
@@ -87,6 +87,7 @@ import { createSfx } from './lib/sfx.mjs';
 import { createShake, createHitstop, createBurstPool, lerp } from './lib/juice.mjs';
 import { createGameHook } from './lib/game-hook.mjs';
 import { createRendererInfo } from './lib/render-info.mjs';
+import { initRenderPreset } from './lib/render-preset.mjs';
 
 // ---------- 定数 ----------
 const GAME_ID = 'shadow-thief';
@@ -107,6 +108,8 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x060810, 10, 22); // principles.md #9
 scene.background = new THREE.Color(0x060810);
+
+const renderPreset = await initRenderPreset(renderer, scene);
 
 const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 60);
 camera.position.set(0, 12, 0);
@@ -341,7 +344,7 @@ const fsm = createFSM({
     exit: () => { ui.title.classList.add('hidden'); sfx.unlock(); },
   },
   playing: {
-    enter: (from) => { if (from !== 'paused') resetRun(); },
+    enter: (from) => { if (from !== 'paused') resetRun(); renderPreset.onPlaying(); },
   },
   paused: {},
   gameover: {

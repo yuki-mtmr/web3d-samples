@@ -19,5 +19,12 @@
     "プレイヤーが背景に埋没する配色"
   ],
   "assetTier": "T0",
-  "cluster": "C1"
+  "cluster": "C1",
+  "renderPreset": {
+    "toneMapping": "neutral",
+    "exposure": 0.95,
+    "envIntensity": 0.25,
+    "shadows": false,
+    "background": "procedural"
+  }
 }

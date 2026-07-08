@@ -19,5 +19,12 @@
     "寒色ネオンへの逸脱"
   ],
   "assetTier": "T1",
-  "cluster": "C1"
+  "cluster": "C1",
+  "renderPreset": {
+    "toneMapping": "neutral",
+    "exposure": 0.9,
+    "envIntensity": 0.25,
+    "shadows": true,
+    "background": "procedural"
+  }
 }

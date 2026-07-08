@@ -6,6 +6,7 @@ import { Vector2 } from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 export function createBloomComposer(renderer, scene, camera, {
   strength = 0.8,
@@ -17,6 +18,9 @@ export function createBloomComposer(renderer, scene, camera, {
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
   composer.addPass(new UnrealBloomPass(new Vector2(width, height), strength, radius, threshold));
+  // OutputPass 無しでは renderer.toneMapping / 出力色空間変換が composer 出力に適用されない
+  // (phase D §1.1)。render-preset(T0)の tone mapping を bloom 使用ゲームでも効かせるため必須。
+  composer.addPass(new OutputPass());
   return {
     composer,
     resize(w, h) {

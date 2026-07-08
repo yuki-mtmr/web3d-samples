@@ -77,6 +77,7 @@ import { createGameHook } from './lib/game-hook.mjs';
 import { createRendererInfo } from './lib/render-info.mjs';
 import { createBloomComposer } from './lib/postfx.mjs';
 import { createNoiseField, mapToRGBA } from './lib/procedural-texture.mjs';
+import { initRenderPreset } from './lib/render-preset.mjs';
 
 // ---------- 定数(theme-sheet.md / brief.json 準拠) ----------
 const GAME_ID = 'tori-gate-run';
@@ -95,14 +96,111 @@ document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(COLOR.background, 16, 44); // 40s の霧イベントで near を詰める
-scene.background = new THREE.Color(COLOR.background);
 
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(0, 3.4, 7.4);
-camera.lookAt(0, 1.2, -8);
+// ---------- H1: 手続き背景(gap-levers.md §1 第一候補、$0 ルート) ----------
+// 空: Canvas2D で夜空グラデ + 月光暈 + 星を 1 枚のテクスチャに焼き込み scene.background に設定。
+// scene.background は fog の影響を受けないため、fog.near を詰める霧イベント後も夜空は損なわれない。
+// 演出専用の乱数(演出シード固定)。gameplay の rng(principles.md #10 対象)とは別インスタンスで
+// 分離し、bot 再現性やシード検証(A/B ゲート)に影響を与えない。
+function skyTexture(seed) {
+  const w = 512, h = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, '#05060c'); // 天頂: background よりさらに深い藍
+  grad.addColorStop(0.55, '#10141f'); // --tk-background と一致させる中間帯
+  grad.addColorStop(1, '#1c2536'); // 地平線際はわずかに明るく霞ませる
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+
+  // 月(ぼんやりした光暈): accent(#ffd9a0)を放射グラデで滲ませる
+  const moonX = w * 0.72, moonY = h * 0.18, moonR = w * 0.045;
+  const halo = ctx.createRadialGradient(moonX, moonY, 0, moonX, moonY, moonR * 6);
+  halo.addColorStop(0, 'rgba(255, 217, 160, 0.85)');
+  halo.addColorStop(0.15, 'rgba(255, 217, 160, 0.32)');
+  halo.addColorStop(1, 'rgba(255, 217, 160, 0)');
+  ctx.fillStyle = halo;
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#fff7e8';
+  ctx.beginPath();
+  ctx.arc(moonX, moonY, moonR, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 星: createRng で決定論化(seed 固定、演出専用インスタンス)
+  const starRng = createRng(seed);
+  for (let i = 0; i < 180; i += 1) {
+    const x = starRng.next() * w;
+    const y = starRng.next() * h * 0.6; // 地平線より上のみに配置
+    const r = starRng.range(0.4, 1.4);
+    const a = starRng.range(0.25, 0.95);
+    ctx.fillStyle = `rgba(255, 255, 255, ${a})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+scene.background = skyTexture(9001);
+
+// 山影シルエット層(2 層): fbm(createNoiseField)で稜線を作り、僅かに色相の異なる暗色で塗る。
+// 遠層ほど霞む(色を明るく・低コントラストに)。fog.near を詰めても平面自体は fog:false のため
+// 見え方が崩れない(遠景ゆえに fog で霞んでいるように見せる必要がなく、テクスチャの明度で表現)。
+function silhouetteTexture(seed, colorHex, { baseCell = 48, ridgeMin = 0.28, ridgeSpread = 0.34 } = {}) {
+  const w = 512, h = 256;
+  const field = createNoiseField(seed, w, 1, { octaves: 4, baseCell });
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  ctx.beginPath();
+  ctx.moveTo(0, h);
+  for (let x = 0; x < w; x += 1) {
+    const ridge = h * (ridgeMin + ridgeSpread * field[x]);
+    ctx.lineTo(x, ridge);
+  }
+  ctx.lineTo(w, h);
+  ctx.closePath();
+  ctx.fillStyle = colorHex;
+  ctx.fill();
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const farHills = new THREE.Mesh(
+  new THREE.PlaneGeometry(240, 80),
+  new THREE.MeshBasicMaterial({
+    map: silhouetteTexture(4101, '#232a3f', { baseCell: 64, ridgeMin: 0.28, ridgeSpread: 0.24 }), // 遠層: 明るめ・低コントラストで霞ませる
+    transparent: true, fog: false, depthWrite: false,
+  }),
+);
+farHills.position.set(0, 8, -80);
+scene.add(farHills);
+
+const nearHills = new THREE.Mesh(
+  new THREE.PlaneGeometry(200, 70),
+  new THREE.MeshBasicMaterial({
+    map: silhouetteTexture(4102, '#0a0d16', { baseCell: 30, ridgeMin: 0.22, ridgeSpread: 0.28 }), // 近層: 暗く輪郭くっきり
+    transparent: true, fog: false, depthWrite: false,
+  }),
+);
+nearHills.position.set(0, 5, -60);
+scene.add(nearHills);
+
+// T0: tone mapping / IBL / 影は lib/render-preset.mjs(Wave 0)に委譲。brief.json の renderPreset が値の SoT。
+// 重い処理(PMREM 焼き込み・影シェーダ)は renderPreset.onPlaying() が playing 入場時に遅延実行する。
+const renderPreset = await initRenderPreset(renderer, scene);
+
+const camera = new THREE.PerspectiveCamera(66, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(0, 2.9, 7.2);
+camera.lookAt(0, 1.6, -12); // 低め+奥向き: 参道の消失点と鳥居の反復を強調(composition)
 const cameraBase = camera.position.clone();
 
 const bloom = createBloomComposer(renderer, scene, camera, { strength: 0.65, threshold: 0.55 });
+// T0: OutputPass は lib/postfx.mjs(Wave 0)が composer に組み込むため index.html 側の追加は不要になった
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -111,10 +209,186 @@ window.addEventListener('resize', () => {
   bloom.resize(window.innerWidth, window.innerHeight); // N9: bloom パスの解像度追随
 });
 
-scene.add(new THREE.HemisphereLight(0x30405c, 0x141018, 1.15));
-const lanternLight = new THREE.PointLight(COLOR.accent, 1.6, 30);
+// lighting 軸: 全体光を絞り、月光(影付き Directional)+ 提灯(暖色 Point)の明暗コントラストで立体感を作る
+scene.add(new THREE.HemisphereLight(0x30405c, 0x141018, 0.7));
+const lanternLight = new THREE.PointLight(COLOR.accent, 2.6, 26, 1.6);
 lanternLight.position.set(0, 4, 2);
 scene.add(lanternLight);
+// 月光: 背景の月の方向(右上奥)から。影の有効化(PCF、playing 入場時遅延)は renderPreset.onPlaying(moonLight) に委譲。
+const moonLight = new THREE.DirectionalLight(0x9db8ff, 0.85);
+moonLight.position.set(14, 18, -24);
+moonLight.shadow.mapSize.set(1024, 1024);
+moonLight.shadow.camera.left = -14; moonLight.shadow.camera.right = 14;
+moonLight.shadow.camera.top = 8; moonLight.shadow.camera.bottom = -8;
+moonLight.shadow.camera.near = 4; moonLight.shadow.camera.far = 70;
+scene.add(moonLight, moonLight.target);
+
+// H2: 進行方向奥のリムライト(暖色・提灯色) — gap-analysis の補色/リム不足を補う。
+// 影は使わず(shadowMap 未使用のプロジェクト方針を踏襲)、鳥居のエッジにのみ暖色を薄く乗せる控えめな強度。
+const rimLight = new THREE.DirectionalLight(COLOR.accent, 0.55);
+rimLight.position.set(-3, 5, -30); // 参道奥・やや上から
+rimLight.target.position.set(0, 1.5, -60);
+scene.add(rimLight, rimLight.target);
+
+// ---------- H3: 光紋(灯籠の光紋 — 魔法陣の翻案、gap-levers.md §2) ----------
+// 和柄(麻の葉/七宝の簡略形)+ 同心円 + 放射線を Canvas2D で焼き込んだ発光テクスチャ。
+// bloom threshold(0.55, 上記 createBloomComposer 呼び出し参照)に乗るよう accent 色を高輝度で描く。
+function koumonTexture() {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, size, size);
+  const cx = size / 2, cy = size / 2;
+  const accentGlow = 'rgba(255, 217, 160, 0.95)';
+  const accentDim = 'rgba(255, 217, 160, 0.35)';
+
+  // 同心円(3 重)
+  ctx.strokeStyle = accentGlow;
+  for (let i = 1; i <= 3; i += 1) {
+    ctx.lineWidth = i === 2 ? 5 : 2.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, (size * 0.46) * (i / 3), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // 放射線(12 方向)
+  ctx.strokeStyle = accentDim;
+  ctx.lineWidth = 2;
+  const spokes = 12;
+  for (let i = 0; i < spokes; i += 1) {
+    const a = (i / spokes) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * size * 0.08, cy + Math.sin(a) * size * 0.08);
+    ctx.lineTo(cx + Math.cos(a) * size * 0.46, cy + Math.sin(a) * size * 0.46);
+    ctx.stroke();
+  }
+
+  // 和柄風の刻み: 七宝つなぎを簡略化した小円の連なりを内周に配置
+  const shippoCount = 16;
+  const shippoR = size * 0.30;
+  ctx.strokeStyle = accentGlow;
+  ctx.lineWidth = 2;
+  for (let i = 0; i < shippoCount; i += 1) {
+    const a = (i / shippoCount) * Math.PI * 2;
+    const px = cx + Math.cos(a) * shippoR;
+    const py = cy + Math.sin(a) * shippoR;
+    ctx.beginPath();
+    ctx.arc(px, py, size * 0.06, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // 麻の葉風の刻み: 外周に六角の折れ線を薄く配置
+  ctx.strokeStyle = 'rgba(255, 217, 160, 0.5)';
+  ctx.lineWidth = 1.5;
+  const asanohaR = size * 0.40;
+  const asanohaCount = 8;
+  for (let i = 0; i < asanohaCount; i += 1) {
+    const a0 = (i / asanohaCount) * Math.PI * 2;
+    const a1 = a0 + (Math.PI * 2) / asanohaCount;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a0) * asanohaR, cy + Math.sin(a0) * asanohaR);
+    ctx.lineTo(cx + Math.cos((a0 + a1) / 2) * asanohaR * 0.72, cy + Math.sin((a0 + a1) / 2) * asanohaR * 0.72);
+    ctx.lineTo(cx + Math.cos(a1) * asanohaR, cy + Math.sin(a1) * asanohaR);
+    ctx.stroke();
+  }
+
+  // 中心の光暈(bloom 閾値 0.55 を確実に超える高輝度コア)
+  const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 0.12);
+  core.addColorStop(0, 'rgba(255, 247, 232, 1)');
+  core.addColorStop(1, 'rgba(255, 217, 160, 0)');
+  ctx.fillStyle = core;
+  ctx.beginPath();
+  ctx.arc(cx, cy, size * 0.12, 0, Math.PI * 2);
+  ctx.fill();
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.center.set(0.5, 0.5);
+  return tex;
+}
+
+const koumonTexLarge = koumonTexture();
+const koumonTexSmall = koumonTexture();
+const koumonLarge = new THREE.Mesh(
+  new THREE.PlaneGeometry(3.2, 3.2),
+  new THREE.MeshBasicMaterial({
+    map: koumonTexLarge, transparent: true, blending: THREE.AdditiveBlending,
+    depthWrite: false, fog: false,
+  }),
+);
+koumonLarge.rotation.x = -Math.PI / 2;
+koumonLarge.position.set(0, 0.02, 0);
+scene.add(koumonLarge);
+
+const koumonSmall = new THREE.Mesh(
+  new THREE.PlaneGeometry(1.5, 1.5),
+  new THREE.MeshBasicMaterial({
+    map: koumonTexSmall, transparent: true, blending: THREE.AdditiveBlending,
+    depthWrite: false, fog: false, opacity: 0.85,
+  }),
+);
+koumonSmall.rotation.x = -Math.PI / 2;
+koumonSmall.position.set(0, 0.03, 0);
+scene.add(koumonSmall);
+
+// ---------- H4: 火の粉/蛍(THREE.Points、gap-levers.md §2) ----------
+// Canvas 生成の丸グロースプライトを AdditiveBlending + depthWrite:false で描く。draw call +1。
+function emberSprite() {
+  const size = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, 'rgba(255, 247, 232, 1)');
+  grad.addColorStop(0.4, 'rgba(255, 217, 160, 0.8)');
+  grad.addColorStop(1, 'rgba(255, 217, 160, 0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const EMBER_COUNT = 260;
+const EMBER_X_RANGE = 7;
+const EMBER_Y_MIN = 0.1, EMBER_Y_MAX = 5.5;
+const EMBER_Z_MIN = -70, EMBER_Z_MAX = 4;
+const emberRng = createRng(7331); // 演出専用 rng(gameplay rng とは分離)
+const emberPositions = new Float32Array(EMBER_COUNT * 3);
+const emberSpeeds = new Float32Array(EMBER_COUNT);
+const emberPhase = new Float32Array(EMBER_COUNT);
+for (let i = 0; i < EMBER_COUNT; i += 1) {
+  emberPositions[i * 3] = emberRng.range(-EMBER_X_RANGE, EMBER_X_RANGE);
+  emberPositions[i * 3 + 1] = emberRng.range(EMBER_Y_MIN, EMBER_Y_MAX);
+  emberPositions[i * 3 + 2] = emberRng.range(EMBER_Z_MIN, EMBER_Z_MAX);
+  emberSpeeds[i] = emberRng.range(0.25, 0.7);
+  emberPhase[i] = emberRng.range(0, Math.PI * 2);
+}
+const emberGeo = new THREE.BufferGeometry();
+emberGeo.setAttribute('position', new THREE.BufferAttribute(emberPositions, 3));
+const emberMat = new THREE.PointsMaterial({
+  map: emberSprite(), size: 0.16, transparent: true, opacity: 0.9,
+  blending: THREE.AdditiveBlending, depthWrite: false, color: COLOR.accent, sizeAttenuation: true,
+});
+const embers = new THREE.Points(emberGeo, emberMat);
+embers.frustumCulled = false;
+scene.add(embers);
+
+function updateEmbers(dt, elapsed) {
+  const pos = emberGeo.attributes.position.array;
+  for (let i = 0; i < EMBER_COUNT; i += 1) {
+    const idx = i * 3;
+    pos[idx + 1] += emberSpeeds[i] * dt; // ゆっくり上昇
+    pos[idx] += Math.sin(elapsed * 0.6 + emberPhase[i]) * 0.15 * dt; // 揺らぎ
+    if (pos[idx + 1] > EMBER_Y_MAX) {
+      pos[idx + 1] = EMBER_Y_MIN;
+      pos[idx] = emberRng.range(-EMBER_X_RANGE, EMBER_X_RANGE);
+      pos[idx + 2] = emberRng.range(EMBER_Z_MIN, EMBER_Z_MAX);
+    }
+  }
+  emberGeo.attributes.position.needsUpdate = true;
+}
 
 // ---------- ワールド構築 ----------
 // T1: 参道の石畳(単色大面積のテーマ核 → 手続き型テクスチャ、M7 実証パターン)
@@ -138,17 +412,8 @@ const ground = new THREE.Mesh(
 );
 ground.rotation.x = -Math.PI / 2;
 ground.position.set(0, -0.01, -60);
+ground.receiveShadow = true;
 scene.add(ground);
-
-// 遠景の山影シルエット
-for (const [x, s] of [[-16, 26], [14, 32]]) {
-  const hill = new THREE.Mesh(
-    new THREE.ConeGeometry(s, s * 0.5, 4),
-    new THREE.MeshBasicMaterial({ color: 0x0a0d16 }),
-  );
-  hill.position.set(x, -2, -46);
-  scene.add(hill);
-}
 
 // プレイヤー(提灯を提げた駆け手)
 const player = new THREE.Group();
@@ -174,12 +439,40 @@ const mkInstanced = (geo, mat, count) => {
   scene.add(m);
   return m;
 };
+// 朱塗りの木質感(material 軸): 縦木目の明暗ムラ + 塗りの掠れを map/roughnessMap に焼き込み、
+// IBL(scene.environment)を拾うよう metalness を僅かに与える。単色ベタ塗りの「安っぽさ」対策。
+function lacquerTextures() {
+  const w = 64; const h = 256;
+  const field = createNoiseField(4417, w, h, { octaves: 3, baseCell: 6 });
+  const map = document.createElement('canvas'); map.width = w; map.height = h;
+  const rough = document.createElement('canvas'); rough.width = w; rough.height = h;
+  const mctx = map.getContext('2d'); const rctx = rough.getContext('2d');
+  const base = new THREE.Color(COLOR.primary);
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      // 縦方向に引き伸ばした木目: x 方向の変化を強く、y 方向を弱く
+      const n = field[Math.floor(y / 8) * w + x];
+      const shade = 0.82 + n * 0.3; // 0.82〜1.12 の明度ムラ
+      mctx.fillStyle = `rgb(${base.r * 255 * shade | 0},${base.g * 255 * shade | 0},${base.b * 255 * shade | 0})`;
+      mctx.fillRect(x, y, 1, 1);
+      const r = 140 + n * 90; // 塗りの掠れ: ノイズで roughness を 0.55〜0.9 相当に散らす
+      rctx.fillStyle = `rgb(${r | 0},${r | 0},${r | 0})`;
+      rctx.fillRect(x, y, 1, 1);
+    }
+  }
+  const mapTex = new THREE.CanvasTexture(map);
+  mapTex.colorSpace = THREE.SRGBColorSpace;
+  return { map: mapTex, roughnessMap: new THREE.CanvasTexture(rough) };
+}
+const lacquer = lacquerTextures();
 const toriiMat = new THREE.MeshStandardMaterial({
-  color: COLOR.primary, emissive: COLOR.primary, emissiveIntensity: 0.75, roughness: 0.5,
+  color: 0xffffff, map: lacquer.map, roughnessMap: lacquer.roughnessMap,
+  emissive: COLOR.primary, emissiveIntensity: 0.35, roughness: 1, metalness: 0.18,
 });
 const pillarMesh = mkInstanced(new THREE.BoxGeometry(0.28, 3.0, 0.28), toriiMat, GATE_POOL * 2);
 const kasagiMesh = mkInstanced(new THREE.BoxGeometry(4.9, 0.3, 0.4), toriiMat, GATE_POOL);
 const nukiMesh = mkInstanced(new THREE.BoxGeometry(4.1, 0.2, 0.3), toriiMat, GATE_POOL);
+for (const m of [pillarMesh, kasagiMesh, nukiMesh]) m.castShadow = true; // 月光の落ち影(lighting 軸)
 const wallMesh = mkInstanced(
   new THREE.BoxGeometry(1.1, 1.1, 0.5),
   new THREE.MeshStandardMaterial({ color: 0x232838, roughness: 0.9 }),
@@ -191,15 +484,37 @@ const wallLampMesh = mkInstanced(
   GATE_POOL * 4,
 );
 const DECOR_LANTERNS = 14;
+// 提灯: 箱 → 円筒 + 和紙リブ(横縞)の emissiveMap で「ちょうちん」らしさを出す(material 軸)
+function paperTexture() {
+  const c = document.createElement('canvas'); c.width = 32; c.height = 64;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, 64);
+  grad.addColorStop(0, '#7a5a20'); grad.addColorStop(0.5, '#ffffff'); grad.addColorStop(1, '#7a5a20');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, 32, 64);
+  ctx.strokeStyle = 'rgba(60,40,10,0.55)'; ctx.lineWidth = 1.5;
+  for (let y = 8; y < 64; y += 9) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(32, y); ctx.stroke(); }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
 const decorLanternMesh = mkInstanced(
-  new THREE.BoxGeometry(0.3, 0.42, 0.3),
-  new THREE.MeshStandardMaterial({ color: COLOR.accent, emissive: COLOR.accent, emissiveIntensity: 1.5 }),
+  new THREE.CylinderGeometry(0.17, 0.21, 0.44, 10),
+  new THREE.MeshStandardMaterial({
+    color: COLOR.accent, emissive: COLOR.accent, emissiveMap: paperTexture(), emissiveIntensity: 1.7,
+  }),
   DECOR_LANTERNS,
 );
 const decorLanterns = Array.from({ length: DECOR_LANTERNS }, (_, i) => ({
   x: i % 2 === 0 ? -4.2 : 4.2,
   z: -6 * Math.floor(i / 2) + 2,
 }));
+
+// 装飾の大鳥居列(composition: 消失点への反復。ゲームロジック非干渉、参道全幅をまたぐ暗色シルエット)
+const DECOR_TORII = 9;
+const decorToriiMat = new THREE.MeshStandardMaterial({ color: 0x5a1a12, roughness: 0.8 });
+const decorToriiPillar = mkInstanced(new THREE.BoxGeometry(0.5, 4.6, 0.5), decorToriiMat, DECOR_TORII * 2);
+const decorToriiKasagi = mkInstanced(new THREE.BoxGeometry(8.2, 0.5, 0.62), decorToriiMat, DECOR_TORII);
+const decorTorii = Array.from({ length: DECOR_TORII }, (_, i) => ({ z: -14 - 9 * i })); // 9 本 ×9 間隔で奥まで連なるトンネル
 
 // ゲート: center レーン ±1 が「くぐれる」開口、それより外は石垣で封鎖
 const gates = Array.from({ length: GATE_POOL }, () => ({ active: false, center: 2, z: 0, passed: false }));
@@ -232,7 +547,16 @@ function syncWorld() {
     dummy.position.set(d.x, 1.6, d.z); dummy.updateMatrix();
     decorLanternMesh.setMatrixAt(i, dummy.matrix);
   });
-  for (const m of [pillarMesh, kasagiMesh, nukiMesh, wallMesh, wallLampMesh, decorLanternMesh]) {
+  decorTorii.forEach((d, i) => {
+    dummy.position.set(-3.85, 2.3, d.z); dummy.updateMatrix();
+    decorToriiPillar.setMatrixAt(i * 2, dummy.matrix);
+    dummy.position.set(3.85, 2.3, d.z); dummy.updateMatrix();
+    decorToriiPillar.setMatrixAt(i * 2 + 1, dummy.matrix);
+    dummy.position.set(0, 4.75, d.z); dummy.updateMatrix();
+    decorToriiKasagi.setMatrixAt(i, dummy.matrix);
+  });
+  for (const m of [pillarMesh, kasagiMesh, nukiMesh, wallMesh, wallLampMesh, decorLanternMesh,
+    decorToriiPillar, decorToriiKasagi]) {
     m.instanceMatrix.needsUpdate = true;
   }
 }
@@ -313,7 +637,7 @@ const fsm = createFSM({
     exit: () => { ui.title.classList.add('hidden'); sfx.unlock(); },
   },
   playing: {
-    enter: (from) => { if (from !== 'paused') resetRun(); },
+    enter: (from) => { if (from !== 'paused') resetRun(); renderPreset.onPlaying(moonLight); },
   },
   paused: {},
   gameover: {
@@ -388,6 +712,10 @@ function updatePlaying(dt) {
   }
 
   // 提灯列のループ
+  for (const d of decorTorii) {
+    d.z += speed * dt;
+    if (d.z > 4) d.z -= 9 * DECOR_TORII; // プレイヤー頭上を抜けたら最奥へ戻す
+  }
   for (const d of decorLanterns) {
     d.z += speed * dt;
     if (d.z > KILL_Z) d.z -= 6 * (DECOR_LANTERNS / 2);
@@ -408,15 +736,27 @@ const loop = createLoop({ // principles.md #1
     if (fsm.is('paused') && input.consumePressed().has('pause')) fsm.transition('playing');
     shake.update(dt);
     burst.update(scaled);
+    // H3/H4: 演出専用の毎フレーム更新(hitstop の影響を受けず常に滑らかに回転・浮遊させる)
+    koumonTexLarge.rotation += dt * 0.35;
+    koumonTexSmall.rotation -= dt * 0.5; // 逆方向 UV 回転で「渦巻く」重なりを作る
+    updateEmbers(dt, loop.elapsed());
   },
   render: () => {
     // 離散状態(レーン)と連続描画(lerp)の分離 (principles.md #3)
     state.playerX = lerp(state.playerX, LANES[state.playerLane], 0.22);
     player.position.x = state.playerX;
     player.rotation.z = (state.playerX - LANES[state.playerLane]) * 0.25;
+    // パララックス: 横移動と僅かに逆方向へシルエット層を動かす(遠層ほど動きを小さく)
+    farHills.position.x = state.playerX * -0.02;
+    nearHills.position.x = state.playerX * -0.05;
     const offset = shake.offset();
     camera.position.set(cameraBase.x + state.playerX * 0.35 + offset.x, cameraBase.y + offset.y, cameraBase.z);
     syncWorld();
+
+    // H3: 光紋(灯籠の光紋)は足元に追従し、逆方向 UV 回転で「渦巻く紋様」を演出
+    koumonLarge.position.set(state.playerX, 0.02, 0);
+    koumonSmall.position.set(state.playerX, 0.03, 0);
+
     ui.score.textContent = `くぐり ${state.score}`;
     renderer.info.reset();
     bloom.render();

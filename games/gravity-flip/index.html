@@ -36,7 +36,7 @@
     cursor: pointer; background: none; border: none; color: var(--fg); }
 </style>
 <script type="importmap">
-  { "imports": { "three": "https://unpkg.com/three@0.185.0/build/three.module.js" } }
+  { "imports": { "three": "https://unpkg.com/three@0.185.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.185.0/examples/jsm/" } }
 </script>
 </head>
 <body>
@@ -68,6 +68,7 @@ import { createSfx } from './lib/sfx.mjs';
 import { createShake, createHitstop, createBurstPool, lerp } from './lib/juice.mjs';
 import { createGameHook } from './lib/game-hook.mjs';
 import { createRendererInfo } from './lib/render-info.mjs';
+import { initRenderPreset } from './lib/render-preset.mjs';
 
 // ---------- 定数 (brief B03: サイドビュー / 重力反転 / レトロワイヤーフレーム) ----------
 const GAME_ID = 'gravity-flip';
@@ -86,6 +87,8 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x05070f);
 scene.fog = new THREE.Fog(0x05070f, 18, 34);
+
+const renderPreset = await initRenderPreset(renderer, scene);
 
 const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 100);
 camera.position.set(0, 0, 13);
@@ -202,7 +205,7 @@ const fsm = createFSM({
     exit: () => { ui.title.classList.add('hidden'); sfx.unlock(); },
   },
   playing: {
-    enter: (from) => { if (from !== 'paused') resetRun(); },
+    enter: (from) => { if (from !== 'paused') resetRun(); renderPreset.onPlaying(); },
   },
   paused: {},
   gameover: {

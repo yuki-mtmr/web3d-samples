@@ -40,7 +40,7 @@
     cursor: pointer; background: none; border: none; color: var(--fg); }
 </style>
 <script type="importmap">
-  { "imports": { "three": "https://unpkg.com/three@0.185.0/build/three.module.js" } }
+  { "imports": { "three": "https://unpkg.com/three@0.185.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.185.0/examples/jsm/" } }
 </script>
 </head>
 <body>
@@ -88,6 +88,7 @@ import { createSfx } from './lib/sfx.mjs';
 import { createShake, createHitstop, createBurstPool, lerp, easeOutCubic } from './lib/juice.mjs';
 import { createGameHook } from './lib/game-hook.mjs';
 import { createRendererInfo } from './lib/render-info.mjs';
+import { initRenderPreset } from './lib/render-preset.mjs';
 
 // ---------- 定数 ----------
 const GAME_ID = 'lava-hopper';
@@ -115,6 +116,8 @@ const fogBase = new THREE.Color(0x1a0d09);
 const fogGeyser = new THREE.Color(0x2a0806);
 scene.fog = new THREE.Fog(fogBase.clone(), 12, 34); // principles.md #9
 scene.background = fogBase.clone();
+
+const renderPreset = await initRenderPreset(renderer, scene);
 
 const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 100);
 camera.position.set(0, 4.4, 6.6);
@@ -230,7 +233,7 @@ const fsm = createFSM({
     exit: () => { ui.title.classList.add('hidden'); sfx.unlock(); },
   },
   playing: {
-    enter: (from) => { if (from !== 'paused') resetRun(); },
+    enter: (from) => { if (from !== 'paused') resetRun(); renderPreset.onPlaying(); },
   },
   paused: {},
   gameover: {

@@ -19,5 +19,12 @@
     "bloom 不在での emissive 多用"
   ],
   "assetTier": "T1",
-  "cluster": "C1"
+  "cluster": "C1",
+  "renderPreset": {
+    "toneMapping": "neutral",
+    "exposure": 0.92,
+    "envIntensity": 0.3,
+    "shadows": false,
+    "background": "procedural"
+  }
 }
