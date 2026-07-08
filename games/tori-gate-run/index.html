@@ -75,7 +75,6 @@ import { createShake, createHitstop, createBurstPool, lerp } from './lib/juice.m
 import { createRng } from './lib/rng.mjs';
 import { createGameHook } from './lib/game-hook.mjs';
 import { createRendererInfo } from './lib/render-info.mjs';
-import { createBloomComposer } from './lib/postfx.mjs';
 import { createNoiseField, mapToRGBA } from './lib/procedural-texture.mjs';
 import { initRenderPreset } from './lib/render-preset.mjs';
 
@@ -172,21 +171,17 @@ function silhouetteTexture(seed, colorHex, { baseCell = 48, ridgeMin = 0.28, rid
 
 const farHills = new THREE.Mesh(
   new THREE.PlaneGeometry(240, 80),
-  new THREE.MeshBasicMaterial({
-    map: silhouetteTexture(4101, '#232a3f', { baseCell: 64, ridgeMin: 0.28, ridgeSpread: 0.24 }), // 遠層: 明るめ・低コントラストで霞ませる
-    transparent: true, fog: false, depthWrite: false,
-  }),
+  new THREE.MeshBasicMaterial({ transparent: true, fog: false, depthWrite: false }), // map は boot 後に遅延生成
 );
+farHills.visible = false;
 farHills.position.set(0, 8, -80);
 scene.add(farHills);
 
 const nearHills = new THREE.Mesh(
-  new THREE.PlaneGeometry(200, 70),
-  new THREE.MeshBasicMaterial({
-    map: silhouetteTexture(4102, '#0a0d16', { baseCell: 30, ridgeMin: 0.22, ridgeSpread: 0.28 }), // 近層: 暗く輪郭くっきり
-    transparent: true, fog: false, depthWrite: false,
-  }),
+  new THREE.PlaneGeometry(200, 60),
+  new THREE.MeshBasicMaterial({ transparent: true, fog: false, depthWrite: false }),
 );
+nearHills.visible = false;
 nearHills.position.set(0, 5, -60);
 scene.add(nearHills);
 
@@ -199,21 +194,27 @@ camera.position.set(0, 2.9, 7.2);
 camera.lookAt(0, 1.6, -12); // 低め+奥向き: 参道の消失点と鳥居の反復を強調(composition)
 const cameraBase = camera.position.clone();
 
-const bloom = createBloomComposer(renderer, scene, camera, { strength: 0.65, threshold: 0.55 });
+// bloom も boot 予算(A2)から外す: composer のシェーダコンパイルが headless で数百 ms 食うため
+// 遅延生成し、準備完了までは素の renderer.render で描画する(見た目の切替は title 中に完了)
+let bloom = null;
+setTimeout(async () => {
+  // postfx(EffectComposer 系 addon 4 本)の CDN フェッチも boot 予算から外す
+  const { createBloomComposer } = await import('./lib/postfx.mjs');
+  bloom = createBloomComposer(renderer, scene, camera, { strength: 0.65, threshold: 0.55 });
+  bloom.resize(window.innerWidth, window.innerHeight);
+}, 250);
 // T0: OutputPass は lib/postfx.mjs(Wave 0)が composer に組み込むため index.html 側の追加は不要になった
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-  bloom.resize(window.innerWidth, window.innerHeight); // N9: bloom パスの解像度追随
+  if (bloom) bloom.resize(window.innerWidth, window.innerHeight); // N9: bloom パスの解像度追随
 });
 
 // lighting 軸: 全体光を絞り、月光(影付き Directional)+ 提灯(暖色 Point)の明暗コントラストで立体感を作る
 scene.add(new THREE.HemisphereLight(0x30405c, 0x141018, 0.7));
-const lanternLight = new THREE.PointLight(COLOR.accent, 2.6, 26, 1.6);
-lanternLight.position.set(0, 4, 2);
-scene.add(lanternLight);
+// (固定の吊り提灯光は撤去 — プレイヤーの炎と松明の光源プールが「実際に夜を照らす」)
 // 月光: 背景の月の方向(右上奥)から。影の有効化(PCF、playing 入場時遅延)は renderPreset.onPlaying(moonLight) に委譲。
 const moonLight = new THREE.DirectionalLight(0x9db8ff, 0.85);
 moonLight.position.set(14, 18, -24);
@@ -233,104 +234,7 @@ scene.add(rimLight, rimLight.target);
 // ---------- H3: 光紋(灯籠の光紋 — 魔法陣の翻案、gap-levers.md §2) ----------
 // 和柄(麻の葉/七宝の簡略形)+ 同心円 + 放射線を Canvas2D で焼き込んだ発光テクスチャ。
 // bloom threshold(0.55, 上記 createBloomComposer 呼び出し参照)に乗るよう accent 色を高輝度で描く。
-function koumonTexture() {
-  const size = 512;
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, size, size);
-  const cx = size / 2, cy = size / 2;
-  const accentGlow = 'rgba(255, 217, 160, 0.95)';
-  const accentDim = 'rgba(255, 217, 160, 0.35)';
-
-  // 同心円(3 重)
-  ctx.strokeStyle = accentGlow;
-  for (let i = 1; i <= 3; i += 1) {
-    ctx.lineWidth = i === 2 ? 5 : 2.5;
-    ctx.beginPath();
-    ctx.arc(cx, cy, (size * 0.46) * (i / 3), 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
-  // 放射線(12 方向)
-  ctx.strokeStyle = accentDim;
-  ctx.lineWidth = 2;
-  const spokes = 12;
-  for (let i = 0; i < spokes; i += 1) {
-    const a = (i / spokes) * Math.PI * 2;
-    ctx.beginPath();
-    ctx.moveTo(cx + Math.cos(a) * size * 0.08, cy + Math.sin(a) * size * 0.08);
-    ctx.lineTo(cx + Math.cos(a) * size * 0.46, cy + Math.sin(a) * size * 0.46);
-    ctx.stroke();
-  }
-
-  // 和柄風の刻み: 七宝つなぎを簡略化した小円の連なりを内周に配置
-  const shippoCount = 16;
-  const shippoR = size * 0.30;
-  ctx.strokeStyle = accentGlow;
-  ctx.lineWidth = 2;
-  for (let i = 0; i < shippoCount; i += 1) {
-    const a = (i / shippoCount) * Math.PI * 2;
-    const px = cx + Math.cos(a) * shippoR;
-    const py = cy + Math.sin(a) * shippoR;
-    ctx.beginPath();
-    ctx.arc(px, py, size * 0.06, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
-  // 麻の葉風の刻み: 外周に六角の折れ線を薄く配置
-  ctx.strokeStyle = 'rgba(255, 217, 160, 0.5)';
-  ctx.lineWidth = 1.5;
-  const asanohaR = size * 0.40;
-  const asanohaCount = 8;
-  for (let i = 0; i < asanohaCount; i += 1) {
-    const a0 = (i / asanohaCount) * Math.PI * 2;
-    const a1 = a0 + (Math.PI * 2) / asanohaCount;
-    ctx.beginPath();
-    ctx.moveTo(cx + Math.cos(a0) * asanohaR, cy + Math.sin(a0) * asanohaR);
-    ctx.lineTo(cx + Math.cos((a0 + a1) / 2) * asanohaR * 0.72, cy + Math.sin((a0 + a1) / 2) * asanohaR * 0.72);
-    ctx.lineTo(cx + Math.cos(a1) * asanohaR, cy + Math.sin(a1) * asanohaR);
-    ctx.stroke();
-  }
-
-  // 中心の光暈(bloom 閾値 0.55 を確実に超える高輝度コア)
-  const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 0.12);
-  core.addColorStop(0, 'rgba(255, 247, 232, 1)');
-  core.addColorStop(1, 'rgba(255, 217, 160, 0)');
-  ctx.fillStyle = core;
-  ctx.beginPath();
-  ctx.arc(cx, cy, size * 0.12, 0, Math.PI * 2);
-  ctx.fill();
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.center.set(0.5, 0.5);
-  return tex;
-}
-
-const koumonTexLarge = koumonTexture();
-const koumonTexSmall = koumonTexture();
-const koumonLarge = new THREE.Mesh(
-  new THREE.PlaneGeometry(3.2, 3.2),
-  new THREE.MeshBasicMaterial({
-    map: koumonTexLarge, transparent: true, blending: THREE.AdditiveBlending,
-    depthWrite: false, fog: false,
-  }),
-);
-koumonLarge.rotation.x = -Math.PI / 2;
-koumonLarge.position.set(0, 0.02, 0);
-scene.add(koumonLarge);
-
-const koumonSmall = new THREE.Mesh(
-  new THREE.PlaneGeometry(1.5, 1.5),
-  new THREE.MeshBasicMaterial({
-    map: koumonTexSmall, transparent: true, blending: THREE.AdditiveBlending,
-    depthWrite: false, fog: false, opacity: 0.85,
-  }),
-);
-koumonSmall.rotation.x = -Math.PI / 2;
-koumonSmall.position.set(0, 0.03, 0);
-scene.add(koumonSmall);
+// (光紋リングは 2026-07-08 のフィードバックで削除 — 水面シミュレーションの波紋に一本化)
 
 // ---------- H4: 火の粉/蛍(THREE.Points、gap-levers.md §2) ----------
 // Canvas 生成の丸グロースプライトを AdditiveBlending + depthWrite:false で描く。draw call +1。
@@ -442,6 +346,13 @@ let water = null;
 setTimeout(async () => {
   // Water は起動パスから外す(モジュール取得・パースも A2 予算を食うため動的 import)
   const { Water } = await import('three/addons/objects/Water.js');
+  // 山影テクスチャも boot 予算(A2)から外す(title 表示 0.4s 後に出現)
+  farHills.material.map = silhouetteTexture(4101, '#232a3f', { baseCell: 64, ridgeMin: 0.28, ridgeSpread: 0.24 });
+  farHills.material.needsUpdate = true;
+  farHills.visible = true;
+  nearHills.material.map = silhouetteTexture(4102, '#0a0d16', { baseCell: 40, ridgeMin: 0.42, ridgeSpread: 0.3 });
+  nearHills.material.needsUpdate = true;
+  nearHills.visible = true;
   water = new Water(new THREE.PlaneGeometry(60, 200), {
     textureWidth: 512,
     textureHeight: 512,
@@ -449,53 +360,117 @@ setTimeout(async () => {
     sunDirection: new THREE.Vector3(0.55, 0.7, -0.9).normalize(), // 月の方向と一致させる
     sunColor: 0x9db8ff,
     waterColor: 0x0b0f1a, // 宵の水(青すぎない宵闇)
-    distortionScale: 1.7,
+    distortionScale: 1.05, // 環境ノイズは控えめにし、シミュレーション由来の波紋を主役にする
     fog: true,
   });
   water.rotation.x = -Math.PI / 2;
   water.position.set(0, -0.01, -60);
+  // シミュレーション法線をシェーダに合成: 環境ノイズ法線(getNoise)の上に、
+  // 波動格子の法線を世界座標でマッピングして加算する(端は smoothstep でフェード)
+  water.material.uniforms.simMap = { value: simTexture };
+  water.material.uniforms.simCenter = { value: new THREE.Vector2(SIM_CENTER.x, SIM_CENTER.z) };
+  water.material.uniforms.simSize = { value: new THREE.Vector2(SIM_SIZE.x, SIM_SIZE.z) };
+  water.material.fragmentShader = 'uniform sampler2D simMap;\nuniform vec2 simCenter;\nuniform vec2 simSize;\n'
+    + water.material.fragmentShader.replace(
+      'vec3 surfaceNormal = normalize( noise.xzy * vec3( 1.5, 1.0, 1.5 ) );',
+      `vec3 surfaceNormal = normalize( noise.xzy * vec3( 1.5, 1.0, 1.5 ) );
+      vec2 simUv = ( worldPosition.xz - simCenter ) / simSize + 0.5;
+      if ( all( greaterThan( simUv, vec2( 0.0 ) ) ) && all( lessThan( simUv, vec2( 1.0 ) ) ) ) {
+        vec2 simN = texture2D( simMap, simUv ).xy * 2.0 - 1.0;
+        float edge = smoothstep( 0.0, 0.08, simUv.x ) * smoothstep( 0.0, 0.08, 1.0 - simUv.x )
+                   * smoothstep( 0.0, 0.08, simUv.y ) * smoothstep( 0.0, 0.08, 1.0 - simUv.y );
+        surfaceNormal = normalize( surfaceNormal + vec3( simN.x, 0.0, simN.y ) * 5.2 * edge );
+      }`);
+  water.material.needsUpdate = true;
   scene.add(water);
   scene.remove(waterPlaceholder);
+  for (const m of deferredMeshes) m.visible = true;
 }, 400);
 
-// 波紋: プレイヤーの進行で広がるリング(プール制)。鳥居くぐり・被弾で強い波紋。
-const RIPPLE_POOL = 7;
-const rippleGeo = new THREE.RingGeometry(0.42, 0.5, 48);
-const ripples = Array.from({ length: RIPPLE_POOL }, () => {
-  const mesh = new THREE.Mesh(rippleGeo, new THREE.MeshBasicMaterial({
-    color: 0xe8cfa0, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, // 炎の照り返し色
-    depthWrite: false, fog: false, side: THREE.DoubleSide,
-  }));
-  mesh.rotation.x = -Math.PI / 2;
-  mesh.position.y = 0.03;
-  mesh.visible = false;
-  scene.add(mesh);
-  return { mesh, t: 1, strength: 1 };
-});
-let rippleCursor = 0;
-let rippleTimer = 0;
-function spawnRipple(x, z, strength = 1) {
-  const r = ripples[rippleCursor];
-  rippleCursor = (rippleCursor + 1) % RIPPLE_POOL;
-  r.t = 0;
-  r.strength = strength;
-  r.mesh.position.x = x;
-  r.mesh.position.z = z;
-  r.mesh.visible = true;
-}
-function updateRipples(dt) {
-  for (const r of ripples) {
-    if (!r.mesh.visible) continue;
-    r.t += dt / 1.4;
-    r.mesh.scale.setScalar(0.6 + r.t * 5.2 * r.strength);
-    r.mesh.material.opacity = Math.max(0, 1 - r.t) * 0.34 * r.strength;
-    if (r.t >= 1) r.mesh.visible = false;
+// 波紋 = 波動方程式の実シミュレーション(物理計算)。
+// 高さ場 h を 2 バッファで時間発展させる古典的な波動格子: next = (隣接4点の平均*2 - prev) * 減衰。
+// 波の伝播・反射・干渉が実際に起こり、進行(ワールドスクロール)に合わせて場を移流させるため
+// 炎の後方に「航跡」が物理的に残る。出力は法線マップとして Water のシェーダに毎フレーム供給する。
+const SIM_N = 160;
+const SIM_CENTER = { x: 0, z: -14 };
+const SIM_SIZE = { x: 30, z: 44 };
+let simH = new Float32Array(SIM_N * SIM_N);
+let simPrev = new Float32Array(SIM_N * SIM_N);
+const simCanvas = document.createElement('canvas');
+simCanvas.width = simCanvas.height = SIM_N;
+const simCtx = simCanvas.getContext('2d');
+const simImage = simCtx.createImageData(SIM_N, SIM_N);
+const simTexture = new THREE.CanvasTexture(simCanvas);
+simTexture.minFilter = THREE.LinearFilter;
+
+// 世界座標 → 格子座標
+const simCol = (wx) => ((wx - SIM_CENTER.x) / SIM_SIZE.x + 0.5) * SIM_N;
+const simRow = (wz) => ((wz - SIM_CENTER.z) / SIM_SIZE.z + 0.5) * SIM_N;
+
+let simActive = false;
+function disturbWater(wx, wz, radius, strength) {
+  simActive = true;
+  const cx = simCol(wx);
+  const cy = simRow(wz);
+  const rCells = Math.max(1, radius / (SIM_SIZE.x / SIM_N));
+  const r = Math.ceil(rCells);
+  for (let dy = -r; dy <= r; dy += 1) {
+    for (let dx = -r; dx <= r; dx += 1) {
+      const x = Math.round(cx + dx);
+      const y = Math.round(cy + dy);
+      if (x < 1 || x >= SIM_N - 1 || y < 1 || y >= SIM_N - 1) continue;
+      const d = Math.hypot(dx, dy) / rCells;
+      if (d > 1) continue;
+      simH[y * SIM_N + x] -= strength * (Math.cos(d * Math.PI) + 1) * 0.5; // 滑らかな押し込み
+    }
   }
+}
+
+let simScrollAcc = 0;
+function stepWaterSim(scrollSpeed, dt) {
+  if (!simActive) return;
+  // 移流: ワールドスクロール分だけ場を +z(手前)へずらす → 航跡が後方に流れる
+  simScrollAcc += (scrollSpeed * dt) / (SIM_SIZE.z / SIM_N);
+  const shift = Math.floor(simScrollAcc);
+  if (shift > 0) {
+    simScrollAcc -= shift;
+    simH.copyWithin(shift * SIM_N, 0, (SIM_N - shift) * SIM_N);
+    simPrev.copyWithin(shift * SIM_N, 0, (SIM_N - shift) * SIM_N);
+    simH.fill(0, 0, shift * SIM_N);
+    simPrev.fill(0, 0, shift * SIM_N);
+  }
+  // 波動方程式(固定 1/60 ステップ前提、createLoop の fixedStep と一致)
+  const next = simPrev; // バッファ再利用
+  for (let y = 1; y < SIM_N - 1; y += 1) {
+    const row = y * SIM_N;
+    for (let x = 1; x < SIM_N - 1; x += 1) {
+      const i = row + x;
+      next[i] = ((simH[i - 1] + simH[i + 1] + simH[i - SIM_N] + simH[i + SIM_N]) * 0.5 - next[i]) * 0.986;
+    }
+  }
+  simPrev = simH;
+  simH = next;
+  // 高さ場 → 法線マップ(Sobel 差分)。R=x 勾配, G=z 勾配
+  const d = simImage.data;
+  for (let y = 1; y < SIM_N - 1; y += 1) {
+    const row = y * SIM_N;
+    for (let x = 1; x < SIM_N - 1; x += 1) {
+      const i = row + x;
+      const o = i * 4;
+      d[o] = Math.max(0, Math.min(255, (0.5 - (simH[i + 1] - simH[i - 1]) * 2.4) * 255));
+      d[o + 1] = Math.max(0, Math.min(255, (0.5 - (simH[i + SIM_N] - simH[i - SIM_N]) * 2.4) * 255));
+      d[o + 2] = 255;
+      d[o + 3] = 255;
+    }
+  }
+  simCtx.putImageData(simImage, 0, 0);
+  simTexture.needsUpdate = true;
 }
 
 // プレイヤー(提灯を提げた駆け手)
 // プレイヤー = 火の玉(炎): コア + ハロの加算スプライト + 追従 PointLight(decay=2 の物理減衰)。
 // 鳥居の下を潜る瞬間、柱・貫が炎の光で「実際に」照らされ、離れると距離の二乗で減衰する。
+let worldSpeed = 0; // 水面シミュレーションの移流速度(playing 中のみ > 0)
 const player = new THREE.Group();
 function flameTexture(innerColor, outerColor) {
   const c = document.createElement('canvas');
@@ -542,25 +517,35 @@ const mkInstanced = (geo, mat, count) => {
 function lacquerTextures() {
   const w = 64; const h = 256;
   const field = createNoiseField(4417, w, h, { octaves: 3, baseCell: 6 });
-  const map = document.createElement('canvas'); map.width = w; map.height = h;
-  const rough = document.createElement('canvas'); rough.width = w; rough.height = h;
-  const mctx = map.getContext('2d'); const rctx = rough.getContext('2d');
   const base = new THREE.Color(COLOR.primary);
+  const mapImg = new ImageData(w, h);
+  const roughImg = new ImageData(w, h);
   for (let y = 0; y < h; y += 1) {
     for (let x = 0; x < w; x += 1) {
-      // 縦方向に引き伸ばした木目: x 方向の変化を強く、y 方向を弱く
+      // 縦方向に引き伸ばした木目: y を 8px 単位で量子化して縦筋を作る
       const n = field[Math.floor(y / 8) * w + x];
       const shade = 0.82 + n * 0.3; // 0.82〜1.12 の明度ムラ
-      mctx.fillStyle = `rgb(${base.r * 255 * shade | 0},${base.g * 255 * shade | 0},${base.b * 255 * shade | 0})`;
-      mctx.fillRect(x, y, 1, 1);
-      const r = 140 + n * 90; // 塗りの掠れ: ノイズで roughness を 0.55〜0.9 相当に散らす
-      rctx.fillStyle = `rgb(${r | 0},${r | 0},${r | 0})`;
-      rctx.fillRect(x, y, 1, 1);
+      const o = (y * w + x) * 4;
+      mapImg.data[o] = base.r * 255 * shade;
+      mapImg.data[o + 1] = base.g * 255 * shade;
+      mapImg.data[o + 2] = base.b * 255 * shade;
+      mapImg.data[o + 3] = 255;
+      const r = 140 + n * 90; // 塗りの掠れ: roughness 0.55〜0.9 相当
+      roughImg.data[o] = r;
+      roughImg.data[o + 1] = r;
+      roughImg.data[o + 2] = r;
+      roughImg.data[o + 3] = 255;
     }
   }
-  const mapTex = new THREE.CanvasTexture(map);
-  mapTex.colorSpace = THREE.SRGBColorSpace;
-  return { map: mapTex, roughnessMap: new THREE.CanvasTexture(rough) };
+  const toTex = (img, srgb) => {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').putImageData(img, 0, 0);
+    const tex = new THREE.CanvasTexture(c);
+    if (srgb) tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  };
+  return { map: toTex(mapImg, true), roughnessMap: toTex(roughImg, false) };
 }
 const lacquer = lacquerTextures();
 const toriiMat = new THREE.MeshStandardMaterial({
@@ -576,32 +561,19 @@ const wallMesh = mkInstanced(
   new THREE.MeshStandardMaterial({ color: 0x232838, roughness: 0.9 }),
   GATE_POOL * 4,
 );
+// 松明(2026-07-08 フィードバック: 浮いた発光体ではなく「夜を照らす松明」を表す)。
+// 構成: 木の柱 + 受け皿(InstancedMesh) + 炎(Points 1 本) + 最寄り 3 基に実 PointLight を割り当てる
+// 光源プール方式 — 全松明に光源を持たせず、プレイヤーに近い松明だけが「本物の光」で夜を照らす。
 const wallLampMesh = mkInstanced(
-  new THREE.BoxGeometry(0.2, 0.24, 0.2),
-  new THREE.MeshStandardMaterial({ color: COLOR.accent, emissive: COLOR.accent, emissiveIntensity: 1.2 }),
+  new THREE.CylinderGeometry(0.13, 0.17, 0.15, 7),
+  new THREE.MeshStandardMaterial({ color: 0x1c1410, roughness: 0.95 }), // 石垣上の火受け皿
   GATE_POOL * 4,
 );
 const DECOR_LANTERNS = 14;
-// 提灯: 箱 → 円筒 + 和紙リブ(横縞)の emissiveMap で「ちょうちん」らしさを出す(material 軸)
-function paperTexture() {
-  const c = document.createElement('canvas'); c.width = 32; c.height = 64;
-  const ctx = c.getContext('2d');
-  const grad = ctx.createLinearGradient(0, 0, 0, 64);
-  grad.addColorStop(0, '#7a5a20'); grad.addColorStop(0.5, '#ffffff'); grad.addColorStop(1, '#7a5a20');
-  ctx.fillStyle = grad; ctx.fillRect(0, 0, 32, 64);
-  ctx.strokeStyle = 'rgba(60,40,10,0.55)'; ctx.lineWidth = 1.5;
-  for (let y = 8; y < 64; y += 9) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(32, y); ctx.stroke(); }
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-const decorLanternMesh = mkInstanced(
-  new THREE.CylinderGeometry(0.17, 0.21, 0.44, 10),
-  new THREE.MeshStandardMaterial({
-    color: COLOR.accent, emissive: COLOR.accent, emissiveMap: paperTexture(), emissiveIntensity: 1.7,
-  }),
-  DECOR_LANTERNS,
-);
+const torchWood = new THREE.MeshStandardMaterial({ color: 0x2a1c12, roughness: 0.9 });
+const torchPole = mkInstanced(new THREE.CylinderGeometry(0.05, 0.075, 1.6, 7), torchWood, DECOR_LANTERNS);
+const torchBowl = mkInstanced(new THREE.CylinderGeometry(0.14, 0.08, 0.18, 7),
+  new THREE.MeshStandardMaterial({ color: 0x1c1410, roughness: 0.95 }), DECOR_LANTERNS);
 const decorLanterns = Array.from({ length: DECOR_LANTERNS }, (_, i) => ({
   x: i % 2 === 0 ? -4.2 : 4.2,
   z: -6 * Math.floor(i / 2) + 2,
@@ -613,6 +585,42 @@ const decorToriiMat = new THREE.MeshStandardMaterial({ color: 0x5a1a12, roughnes
 const decorToriiPillar = mkInstanced(new THREE.BoxGeometry(0.5, 4.6, 0.5), decorToriiMat, DECOR_TORII * 2);
 const decorToriiKasagi = mkInstanced(new THREE.BoxGeometry(8.2, 0.5, 0.62), decorToriiMat, DECOR_TORII);
 const decorTorii = Array.from({ length: DECOR_TORII }, (_, i) => ({ z: -14 - 9 * i })); // 9 本 ×9 間隔で奥まで連なるトンネル
+
+// 松明の炎: 全炎を THREE.Points 1 本で描画(draw call +1)。位置は syncWorld が毎フレーム同期する
+const FLAME_COUNT = DECOR_LANTERNS + GATE_POOL * 4;
+const flamePositions = new Float32Array(FLAME_COUNT * 3).fill(9999);
+const flameGeo = new THREE.BufferGeometry();
+flameGeo.setAttribute('position', new THREE.BufferAttribute(flamePositions, 3));
+const flamePointsMat = new THREE.PointsMaterial({
+  map: flameTexture('#fff3d8', 'rgba(255,150,50,0.55)'),
+  size: 0.5, sizeAttenuation: true, transparent: true,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+});
+const flamePoints = new THREE.Points(flameGeo, flamePointsMat);
+flamePoints.frustumCulled = false;
+scene.add(flamePoints);
+
+// 光源プール: プレイヤー最寄りの松明 3 基だけが実 PointLight(decay=2)を持ち回りで使う。
+// 松明がスクロールで入れ替わっても、近くの松明は常に「本当に」周囲の鳥居・水面を照らす。
+const torchLights = Array.from({ length: 3 }, () => {
+  const l = new THREE.PointLight(0xffab5e, 0, 9, 2);
+  scene.add(l);
+  return l;
+});
+function assignTorchLights(flicker) {
+  const nearest = [...decorLanterns].sort((a, b) => Math.abs(a.z - 0.5) - Math.abs(b.z - 0.5)).slice(0, 3);
+  torchLights.forEach((l, i) => {
+    const t = nearest[i];
+    l.position.set(t.x, 1.9, t.z);
+    l.intensity = 1.9 * flicker[i];
+  });
+}
+
+// A2(boot≤3s): 初回フレームのシェーダコンパイルを最小化するため、装飾メッシュは boot 後に可視化する。
+// (headless software GL ではプログラムコンパイル 1 本 ≈ 50〜150ms × 十数種が boot 計測を圧迫する)
+const deferredMeshes = [pillarMesh, kasagiMesh, nukiMesh, wallMesh, wallLampMesh,
+  torchPole, torchBowl, decorToriiPillar, decorToriiKasagi, embers, flamePoints];
+for (const m of deferredMeshes) m.visible = false;
 
 // ゲート: center レーン ±1 が「くぐれる」開口、それより外は石垣で封鎖
 const gates = Array.from({ length: GATE_POOL }, () => ({ active: false, center: 2, z: 0, passed: false }));
@@ -639,12 +647,22 @@ function syncWorld() {
       wallMesh.setMatrixAt(i * 4 + s, dummy.matrix);
       dummy.position.set(bx, 1.22, bz); dummy.updateMatrix();
       wallLampMesh.setMatrixAt(i * 4 + s, dummy.matrix);
+      const fi = (DECOR_LANTERNS + i * 4 + s) * 3;
+      flamePositions[fi] = bx;
+      flamePositions[fi + 1] = bz === 9999 ? 9999 : 1.44;
+      flamePositions[fi + 2] = bz;
     }
   });
   decorLanterns.forEach((d, i) => {
-    dummy.position.set(d.x, 1.6, d.z); dummy.updateMatrix();
-    decorLanternMesh.setMatrixAt(i, dummy.matrix);
+    dummy.position.set(d.x, 0.8, d.z); dummy.updateMatrix();
+    torchPole.setMatrixAt(i, dummy.matrix);
+    dummy.position.set(d.x, 1.66, d.z); dummy.updateMatrix();
+    torchBowl.setMatrixAt(i, dummy.matrix);
+    flamePositions[i * 3] = d.x;
+    flamePositions[i * 3 + 1] = 1.86;
+    flamePositions[i * 3 + 2] = d.z;
   });
+  flameGeo.attributes.position.needsUpdate = true;
   decorTorii.forEach((d, i) => {
     dummy.position.set(-3.85, 2.3, d.z); dummy.updateMatrix();
     decorToriiPillar.setMatrixAt(i * 2, dummy.matrix);
@@ -653,7 +671,7 @@ function syncWorld() {
     dummy.position.set(0, 4.75, d.z); dummy.updateMatrix();
     decorToriiKasagi.setMatrixAt(i, dummy.matrix);
   });
-  for (const m of [pillarMesh, kasagiMesh, nukiMesh, wallMesh, wallLampMesh, decorLanternMesh,
+  for (const m of [pillarMesh, kasagiMesh, nukiMesh, wallMesh, wallLampMesh, torchPole, torchBowl,
     decorToriiPillar, decorToriiKasagi]) {
     m.instanceMatrix.needsUpdate = true;
   }
@@ -767,17 +785,14 @@ document.getElementById('muteBtn').addEventListener('click', (e) => {
 // ---------- 更新ロジック ----------
 function updatePlaying(dt) {
   state.time += dt;
+  worldSpeed = speedRamp.at(state.time);
 
-  // 波紋: 炎が水面を進む痕跡(周期スポーン)。横移動直後は強めに出す
-  rippleTimer -= dt;
-  if (rippleTimer <= 0) {
-    spawnRipple(state.playerX, 0.55, 0.85);
-    rippleTimer = 0.34;
-  }
+  // 航跡: 炎が水面を進む連続的な押し込み(毎ステップ微小 — 波動格子が自然に引き波を作る)
+  disturbWater(state.playerX, 0.55, 0.5, 0.034);
 
   const pressed = input.consumePressed();
-  if (pressed.has('left')) { state.playerLane = Math.max(0, state.playerLane - 1); sfx.click(0.05); }
-  if (pressed.has('right')) { state.playerLane = Math.min(LANES.length - 1, state.playerLane + 1); sfx.click(0.05); }
+  if (pressed.has('left')) { state.playerLane = Math.max(0, state.playerLane - 1); sfx.click(0.05); disturbWater(state.playerX, 0.55, 0.7, 0.1); }
+  if (pressed.has('right')) { state.playerLane = Math.min(LANES.length - 1, state.playerLane + 1); sfx.click(0.05); disturbWater(state.playerX, 0.55, 0.7, 0.1); }
   if (pressed.has('pause')) { fsm.transition('paused'); return; }
 
   for (const fired of events.fire(state.time)) {
@@ -791,7 +806,7 @@ function updatePlaying(dt) {
     state.spawnTimer = intervalRamp.at(state.time);
   }
 
-  const speed = speedRamp.at(state.time);
+  const speed = worldSpeed;
   for (const g of gates) {
     if (!g.active) continue;
     g.z += speed * dt;
@@ -801,14 +816,14 @@ function updatePlaying(dt) {
       if (Math.abs(state.playerLane - g.center) <= 1) {
         state.score += 1;
         burst.burst(player.position, 14, 3);
-        spawnRipple(state.playerX, 0.55, 1.7); // くぐり抜けの大波紋
+        disturbWater(state.playerX, 0.55, 1.1, 0.22); // くぐり抜けの大波紋
         sfx.ping(0.06);
       }
     }
     // 石垣衝突: 封鎖レーンにいると被弾
     if (Math.abs(g.z) < 0.8 && Math.abs(state.playerLane - g.center) > 1) {
       burst.burst(player.position, 36, 5);
-      spawnRipple(state.playerX, 0.55, 2.2); // 被弾の大波紋
+      disturbWater(state.playerX, 0.55, 1.6, 0.45); // 被弾の大波紋
       shake.add(0.6);
       hitstop.trigger(0.1);
       sfx.crash();
@@ -844,17 +859,21 @@ const loop = createLoop({ // principles.md #1
     shake.update(dt);
     burst.update(scaled);
     // H3/H4: 演出専用の毎フレーム更新(hitstop の影響を受けず常に滑らかに回転・浮遊させる)
-    koumonTexLarge.rotation += dt * 0.35;
-    koumonTexSmall.rotation -= dt * 0.5; // 逆方向 UV 回転で「渦巻く」重なりを作る
     updateEmbers(dt, loop.elapsed());
     // 水面・波紋・炎(そこにある感の物理表現)
-    if (water) water.material.uniforms.time.value += dt * 0.7;
-    updateRipples(dt);
+    if (water) water.material.uniforms.time.value += dt * 0.55;
+    stepWaterSim(worldSpeed, dt);
     const flick = 1 + Math.sin(loop.elapsed() * 21) * 0.08 + Math.sin(loop.elapsed() * 47) * 0.05;
     flameLight.intensity = 3.4 * flick; // 炎の揺らぎが照度に乗る(周囲の鳥居・水面の照り返しも揺れる)
     flameCore.scale.setScalar(0.85 * flick);
     flameHalo.scale.setScalar(1.9 * (1 + (flick - 1) * 0.6));
     flameHalo.material.rotation += dt * 0.8;
+    flamePointsMat.size = 0.5 + Math.sin(loop.elapsed() * 17) * 0.05;
+    assignTorchLights([
+      1 + Math.sin(loop.elapsed() * 19) * 0.18,
+      1 + Math.sin(loop.elapsed() * 23 + 2.1) * 0.18,
+      1 + Math.sin(loop.elapsed() * 29 + 4.4) * 0.18,
+    ]);
   },
   render: () => {
     // 離散状態(レーン)と連続描画(lerp)の分離 (principles.md #3)
@@ -869,12 +888,10 @@ const loop = createLoop({ // principles.md #1
     syncWorld();
 
     // H3: 光紋(灯籠の光紋)は足元に追従し、逆方向 UV 回転で「渦巻く紋様」を演出
-    koumonLarge.position.set(state.playerX, 0.02, 0);
-    koumonSmall.position.set(state.playerX, 0.03, 0);
 
     ui.score.textContent = `くぐり ${state.score}`;
     renderer.info.reset();
-    bloom.render();
+    if (bloom) bloom.render(); else renderer.render(scene, camera);
   },
 });
 
