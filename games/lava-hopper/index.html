@@ -65,6 +65,19 @@
 
 <script type="module">
 import * as THREE from 'three';
+// T1 手続き型テクスチャ(M7 A/B 実測で 4-0 勝利 → 解禁。docs/research/m7-t1-ab.md)
+import { createNoiseField, mapToRGBA } from './lib/procedural-texture.mjs';
+function lavaTexture(seed, stops, repeat, size = 256) {
+  const field = createNoiseField(seed, size, size, { octaves: 4, baseCell: 40 });
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  canvas.getContext('2d').putImageData(new ImageData(mapToRGBA(field, stops), size, size), 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(repeat[0], repeat[1]);
+  return tex;
+}
+
 import { createLoop } from './lib/loop.mjs';
 import { createFSM } from './lib/fsm.mjs';
 import { createInputBuffer } from './lib/input.mjs';
@@ -124,7 +137,16 @@ scene.add(emberLight);
 // ---------- ワールド構築 ----------
 const lava = new THREE.Mesh(
   new THREE.PlaneGeometry(200, 400, 1, 1),
-  new THREE.MeshStandardMaterial({ color: 0x7a1405, emissive: 0xff3300, emissiveIntensity: 1.1, roughness: 0.55 }),
+  (() => {
+    const tex = lavaTexture(1205, [
+      { at: 0, color: [26, 4, 2] }, { at: 0.45, color: [122, 20, 5] },
+      { at: 0.72, color: [255, 74, 20] }, { at: 1, color: [255, 200, 90] },
+    ], [10, 20]);
+    return new THREE.MeshStandardMaterial({
+      color: 0xffffff, map: tex, emissive: 0xffffff, emissiveMap: tex,
+      emissiveIntensity: 0.9, roughness: 0.55,
+    });
+  })(),
 );
 lava.rotation.x = -Math.PI / 2;
 lava.position.set(0, -2.3, -60);

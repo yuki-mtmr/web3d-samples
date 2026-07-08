@@ -6,7 +6,14 @@
 <title>SHADOW THIEF</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🕵️</text></svg>">
 <style>
-  :root { --bg: #060810; --fg: #dfe9f2; --accent: #38f2c6; --danger: #ff6a3d; }
+  :root {
+    /* [THEME-TOKEN] brief.json の palette と一致させること(verify THEME 検査対象) */
+    --tk-primary: #38f2c6;
+    --tk-accent: #dfe9f2;
+    --tk-background: #060810;
+    --tk-danger: #ff6a3d;
+    --bg: var(--tk-background); --fg: var(--tk-accent); --accent: var(--tk-primary); --danger: var(--tk-danger);
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--fg);
     font-family: system-ui, -apple-system, sans-serif; touch-action: none; }

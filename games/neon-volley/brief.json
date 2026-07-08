@@ -1,0 +1,23 @@
+{
+  "id": "B08",
+  "styleKeyword": "ネオン",
+  "palette": {
+    "primary": "#46e6b0",
+    "accent": "#e8ecf8",
+    "background": "#06080f",
+    "danger": "#ff5470"
+  },
+  "mood": [
+    "高彩度",
+    "発光",
+    "硬質幾何"
+  ],
+  "lighting": "emissive 中心、壁とパドルはエッジ発光、全体は暗め",
+  "prohibitions": [
+    "テクスチャ画像の使用",
+    "bloom 不在での emissive 多用",
+    "低コントラストな HUD"
+  ],
+  "assetTier": "T0",
+  "cluster": "C2"
+}

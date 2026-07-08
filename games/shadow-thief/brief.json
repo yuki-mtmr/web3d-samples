@@ -1,0 +1,23 @@
+{
+  "id": "B18",
+  "styleKeyword": "ネオン",
+  "palette": {
+    "primary": "#38f2c6",
+    "accent": "#dfe9f2",
+    "background": "#060810",
+    "danger": "#ff6a3d"
+  },
+  "mood": [
+    "都市夜景",
+    "発光",
+    "ミニマル"
+  ],
+  "lighting": "サーチライトの扇形発光が主光源、床は暗いグリッド",
+  "prohibitions": [
+    "テクスチャ画像の使用",
+    "bloom 不在での emissive 多用",
+    "プレイヤーが背景に埋没する配色"
+  ],
+  "assetTier": "T0",
+  "cluster": "C1"
+}
