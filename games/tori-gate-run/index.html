@@ -561,13 +561,9 @@ function lacquerTextures() {
   return { map: toTex(mapImg, true), roughnessMap: toTex(roughImg, false) };
 }
 const lacquer = lacquerTextures();
-// くぐり連鎖で鳥居の色相が推移する(朱 → 紅 → 茜紫 → 金 → 朱 …)。暖色〜神秘域のみで
-// 巡回し、brief の禁止事項(寒色ネオンへの逸脱)を守る。色は update 内で滑らかに lerp。
-const TORII_HUES = [0xc73e3a, 0xd1495b, 0xa83a8e, 0x8e5bd1, 0xc9a227].map((c) => new THREE.Color(c));
-const toriiColorTarget = TORII_HUES[0].clone();
 const toriiMat = new THREE.MeshStandardMaterial({
-  color: TORII_HUES[0].clone(), map: lacquer.map, roughnessMap: lacquer.roughnessMap,
-  emissive: TORII_HUES[0].clone(), emissiveIntensity: 0.35, roughness: 1, metalness: 0.18,
+  color: COLOR.primary, map: lacquer.map, roughnessMap: lacquer.roughnessMap,
+  emissive: COLOR.primary, emissiveIntensity: 0.35, roughness: 1, metalness: 0.18,
 });
 const pillarMesh = mkInstanced(new THREE.BoxGeometry(0.28, 3.0, 0.28), toriiMat, GATE_POOL * 2);
 const kasagiMesh = mkInstanced(new THREE.BoxGeometry(4.9, 0.3, 0.4), toriiMat, GATE_POOL);
@@ -603,48 +599,55 @@ const decorToriiPillar = mkInstanced(new THREE.BoxGeometry(0.5, 4.6, 0.5), decor
 const decorToriiKasagi = mkInstanced(new THREE.BoxGeometry(8.2, 0.5, 0.62), decorToriiMat, DECOR_TORII);
 const decorTorii = Array.from({ length: DECOR_TORII }, (_, i) => ({ z: -14 - 9 * i })); // 9 本 ×9 間隔で奥まで連なるトンネル
 
-// くぐり演出「光の帳」: 鳥居の開口に立つ光のカーテンを一瞬だけ通り抜ける(plane 1 枚を使い回し)
-function veilTexture() {
-  const c = document.createElement('canvas');
-  c.width = 64; c.height = 128;
-  const ctx = c.getContext('2d');
-  const g = ctx.createLinearGradient(0, 0, 0, 128);
-  g.addColorStop(0, 'rgba(255,230,180,0)');
-  g.addColorStop(0.35, 'rgba(255,230,180,0.55)');
-  g.addColorStop(0.8, 'rgba(255,214,150,0.85)');
-  g.addColorStop(1, 'rgba(255,230,180,0.15)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 64, 128);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-const veil = new THREE.Mesh(
-  new THREE.PlaneGeometry(4.2, 3.1),
-  new THREE.MeshBasicMaterial({
-    map: veilTexture(), transparent: true, opacity: 0,
-    blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide,
-  }),
-);
-veil.visible = false;
-scene.add(veil);
-let veilT = 1; // 1 = 終了
-
-function playGateVeil(cx, z) {
-  veil.position.set(cx, 1.75, z);
-  veil.material.color.copy(toriiColorTarget).lerp(new THREE.Color(0xfff2d8), 0.55); // 鳥居の現在色を帯びた光
-  veilT = 0;
-  veil.visible = true;
-}
-function updateVeil(dt) {
-  if (!veil.visible) return;
-  veilT += dt / 0.75;
-  const fade = Math.sin(Math.min(1, veilT) * Math.PI); // 0→1→0 の柔らかい包絡
-  veil.material.opacity = fade * 0.5;
-  veil.scale.set(1 + veilT * 0.35, 1 + veilT * 0.12, 1);
-  if (veilT >= 1) veil.visible = false;
-}
 let flamePulse = 0; // くぐり時の炎の膨張(1 → 0 へ減衰)
+
+// くぐり演出「開放」: プレイヤーから丸い光の粒子が球状に弾け、ゆっくり減速しながら消える。
+// map 付き PointsMaterial(丸グロー)を使う — 汎用 burst(map なし = 四角い点)は封印。
+const CHAKRA_COUNT = 64;
+const chakraPos = new Float32Array(CHAKRA_COUNT * 3).fill(9999);
+const chakraVel = new Float32Array(CHAKRA_COUNT * 3);
+const chakraGeo = new THREE.BufferGeometry();
+chakraGeo.setAttribute('position', new THREE.BufferAttribute(chakraPos, 3));
+const chakraMat = new THREE.PointsMaterial({
+  map: emberSprite(), size: 0.22, transparent: true, opacity: 0,
+  blending: THREE.AdditiveBlending, depthWrite: false, color: 0xffe9bf, sizeAttenuation: true,
+});
+const chakraPoints = new THREE.Points(chakraGeo, chakraMat);
+chakraPoints.frustumCulled = false;
+scene.add(chakraPoints);
+let chakraT = 1; // 1 = 終了
+
+function playChakraBurst(x, y, z) {
+  for (let i = 0; i < CHAKRA_COUNT; i += 1) {
+    // 球面ランダム + 上方バイアス: 体から気が抜け立ち昇るイメージ
+    const theta = emberRng.range(0, Math.PI * 2);
+    const phi = Math.acos(emberRng.range(-1, 1));
+    const speed = emberRng.range(1.6, 4.2);
+    chakraPos[i * 3] = x;
+    chakraPos[i * 3 + 1] = y + 0.7;
+    chakraPos[i * 3 + 2] = z;
+    chakraVel[i * 3] = Math.sin(phi) * Math.cos(theta) * speed;
+    chakraVel[i * 3 + 1] = Math.abs(Math.cos(phi)) * speed * 0.9 + 0.6;
+    chakraVel[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * speed * 0.6;
+  }
+  chakraT = 0;
+}
+function updateChakra(dt) {
+  if (chakraT >= 1) { chakraMat.opacity = 0; return; }
+  chakraT += dt / 1.1;
+  const drag = Math.exp(-dt * 2.6);
+  for (let i = 0; i < CHAKRA_COUNT; i += 1) {
+    chakraVel[i * 3] *= drag;
+    chakraVel[i * 3 + 1] = chakraVel[i * 3 + 1] * drag + 0.5 * dt; // 減速しつつ僅かに浮く
+    chakraVel[i * 3 + 2] *= drag;
+    chakraPos[i * 3] += chakraVel[i * 3] * dt;
+    chakraPos[i * 3 + 1] += chakraVel[i * 3 + 1] * dt;
+    chakraPos[i * 3 + 2] += chakraVel[i * 3 + 2] * dt;
+  }
+  chakraGeo.attributes.position.needsUpdate = true;
+  chakraMat.opacity = Math.min(1, (1 - chakraT) * 1.6) * 0.9;
+  chakraMat.size = 0.22 + chakraT * 0.1; // 広がりながら僅かに柔らかく
+}
 
 // 松明の炎: 全炎を THREE.Points 1 本で描画(draw call +1)。位置は syncWorld が毎フレーム同期する
 const FLAME_COUNT = DECOR_LANTERNS + GATE_POOL * 4;
@@ -749,7 +752,7 @@ bindPointer(input, document.body);
 const sfx = createSfx();
 const shake = createShake();
 const hitstop = createHitstop();
-const burst = createBurstPool(scene, { color: COLOR.accent });
+// (汎用 burst プールは廃止 — 四角い点で描かれるため。全バーストは chakraPoints(丸グロー)に統合)
 const scoreStore = createScoreStore(GAME_ID);
 
 // 決定論的 RNG (principles.md #10): ゲームプレイに影響する乱数は必ずこの rng を使う
@@ -875,19 +878,19 @@ function updatePlaying(dt) {
       g.passed = true;
       if (Math.abs(state.playerLane - g.center) <= 1) {
         state.score += 1;
-        // 幻想演出: 光の帳を抜け、火の粉が立ち昇り、炎が一拍膨らみ、鳥居の色相がひとつ進む
-        playGateVeil(LANES[g.center], g.z);
+        // 幻想演出: チャクラが開くように光の粒子が弾け、炎が一拍膨らみ、火の粉が立ち昇る
+        chakraMat.color.set(0xffe9bf); // くぐりは気の色
+        playChakraBurst(state.playerX, 0, 0.5);
         emberCluster(LANES[g.center], g.z);
         flamePulse = 1;
-        toriiColorTarget.copy(TORII_HUES[state.score % TORII_HUES.length]);
-        burst.burst(player.position, 6, 2);
         disturbWater(state.playerX, 0.55, 1.1, 0.22); // くぐり抜けの大波紋
         sfx.ping(0.06);
       }
     }
     // 石垣衝突: 封鎖レーンにいると被弾
     if (Math.abs(g.z) < 0.8 && Math.abs(state.playerLane - g.center) > 1) {
-      burst.burst(player.position, 36, 5);
+      chakraMat.color.set(0xff7a50); // 被弾は熱の色
+      playChakraBurst(state.playerX, 0, 0.5);
       disturbWater(state.playerX, 0.55, 1.6, 0.45); // 被弾の大波紋
       shake.add(0.6);
       hitstop.trigger(0.1);
@@ -922,7 +925,6 @@ const loop = createLoop({ // principles.md #1
     if (fsm.is('playing')) updatePlaying(scaled);
     if (fsm.is('paused') && input.consumePressed().has('pause')) fsm.transition('playing');
     shake.update(dt);
-    burst.update(scaled);
     // H3/H4: 演出専用の毎フレーム更新(hitstop の影響を受けず常に滑らかに回転・浮遊させる)
     updateEmbers(dt, loop.elapsed());
     // 水面・波紋・炎(そこにある感の物理表現)
@@ -934,10 +936,8 @@ const loop = createLoop({ // principles.md #1
     flameHalo.scale.setScalar(1.9 * (1 + (flick - 1) * 0.6) * (1 + flamePulse * 0.5));
     flameHalo.material.rotation += dt * 0.8;
     flamePointsMat.size = 0.5 + Math.sin(loop.elapsed() * 17) * 0.05;
-    updateVeil(dt);
+    updateChakra(dt);
     flamePulse = Math.max(0, flamePulse - dt * 2.2);
-    toriiMat.color.lerp(toriiColorTarget, dt * 2.4);
-    toriiMat.emissive.copy(toriiMat.color);
     assignTorchLights([
       1 + Math.sin(loop.elapsed() * 19) * 0.18,
       1 + Math.sin(loop.elapsed() * 23 + 2.1) * 0.18,
