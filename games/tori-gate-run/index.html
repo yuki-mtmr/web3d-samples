@@ -398,7 +398,63 @@ setTimeout(async () => {
   scene.add(water);
   scene.remove(waterPlaceholder);
   for (const m of deferredMeshes) m.visible = true;
+  // Blender 自作鳥居(ライセンス自前 — 公開可)。マテリアル別にジオメトリをマージし
+  // InstancedMesh ×3(朱・黒漆・花崗岩)としてゲート描画に使う。ロード失敗時は箱組みのまま。
+  const [{ GLTFLoader }, { mergeGeometries }] = await Promise.all([
+    import('three/addons/loaders/GLTFLoader.js'),
+    import('three/addons/utils/BufferGeometryUtils.js'),
+  ]);
+  new GLTFLoader().load('./assets/torii-blender.glb', (gltf) => {
+    const buckets = new Map(); // material.name -> { material, geos: [] }
+    gltf.scene.updateWorldMatrix(true, true);
+    gltf.scene.traverse((o) => {
+      if (!o.isMesh) return;
+      // 夜景では黒漆と花崗岩の判別差が小さい — draw call 節約のため同バケットに統合
+      const key = (o.material.name === 'torii_granite') ? 'torii_black' : (o.material.name || 'default');
+      if (!buckets.has(key)) buckets.set(key, { material: o.material, geos: [] });
+      buckets.get(key).geos.push(o.geometry.clone().applyMatrix4(o.matrixWorld));
+    });
+    const SCALE = 0.47; // Blender 実寸(幅~10.9)→ ゲーム内寸法(幅~5.1)
+    // 夜景での視認性: 箱組み版と同じく自照(emissive)を与える。朱は明るめに補正
+    for (const b of buckets.values()) {
+      const m = b.material;
+      if (m.name === 'torii_vermilion') {
+        m.color.set(COLOR.primary);
+        m.emissive = new THREE.Color(COLOR.primary);
+        m.emissiveIntensity = 0.4;
+      } else if (m.name === 'torii_black') {
+        m.emissive = new THREE.Color(0x2a1c14);
+        m.emissiveIntensity = 0.5;
+      } else {
+        m.emissive = new THREE.Color(0x2a2a30);
+        m.emissiveIntensity = 0.35;
+      }
+    }
+    const mkParts = (count, tint) => [...buckets.values()].map(({ material, geos }) => {
+      const geo = mergeGeometries(geos, false);
+      geo.scale(SCALE, SCALE, SCALE);
+      const mat = tint ? material.clone() : material;
+      if (tint) { mat.color.set(tint); mat.emissive.set(tint); mat.emissiveIntensity = 0.25; }
+      const mesh = new THREE.InstancedMesh(geo, mat, count);
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+      return mesh;
+    });
+    gateToriiParts = mkParts(GATE_POOL, null);
+    // 装飾の大鳥居列も同形状の暗色版に統一(スケール 1.55 倍で外周をまたぐ)
+    decorToriiParts = mkParts(DECOR_TORII, 0x63201a);
+    for (const part of decorToriiParts) part.geometry = part.geometry.clone();
+    for (const part of decorToriiParts) part.geometry.scale(1.62, 1.42, 1.42);
+    pillarMesh.visible = false;
+    kasagiMesh.visible = false;
+    nukiMesh.visible = false;
+    decorToriiPillar.visible = false;
+    decorToriiKasagi.visible = false;
+  }, undefined, (err) => console.warn(`torii glb load failed (箱組みのまま続行): ${err.message ?? err}`));
 }, 400);
+
+let gateToriiParts = null;
+let decorToriiParts = null;
 
 // 波紋 = 波動方程式の実シミュレーション(物理計算)。
 // 高さ場 h を 2 バッファで時間発展させる古典的な波動格子: next = (隣接4点の平均*2 - prev) * 減衰。
@@ -701,6 +757,10 @@ function syncWorld() {
     kasagiMesh.setMatrixAt(i, dummy.matrix);
     dummy.position.set(cx, 2.35, z); dummy.updateMatrix();
     nukiMesh.setMatrixAt(i, dummy.matrix);
+    if (gateToriiParts) {
+      dummy.position.set(cx, 0, z); dummy.updateMatrix();
+      for (const part of gateToriiParts) part.setMatrixAt(i, dummy.matrix);
+    }
     const blocked = g.active ? blockedLanes(g.center) : [];
     for (let s = 0; s < 4; s += 1) {
       const lane = blocked[s];
@@ -733,7 +793,13 @@ function syncWorld() {
     decorToriiPillar.setMatrixAt(i * 2 + 1, dummy.matrix);
     dummy.position.set(0, 4.75, d.z); dummy.updateMatrix();
     decorToriiKasagi.setMatrixAt(i, dummy.matrix);
+    if (decorToriiParts) {
+      dummy.position.set(0, 0, d.z); dummy.updateMatrix();
+      for (const part of decorToriiParts) part.setMatrixAt(i, dummy.matrix);
+    }
   });
+  if (decorToriiParts) for (const part of decorToriiParts) part.instanceMatrix.needsUpdate = true;
+  if (gateToriiParts) for (const part of gateToriiParts) part.instanceMatrix.needsUpdate = true;
   for (const m of [pillarMesh, kasagiMesh, nukiMesh, wallMesh, wallLampMesh, torchPole, torchBowl,
     decorToriiPillar, decorToriiKasagi]) {
     m.instanceMatrix.needsUpdate = true;
