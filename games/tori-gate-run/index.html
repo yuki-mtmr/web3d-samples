@@ -279,6 +279,19 @@ const embers = new THREE.Points(emberGeo, emberMat);
 embers.frustumCulled = false;
 scene.add(embers);
 
+// くぐり演出: 既存の火の粉のうち 22 粒を鳥居開口へ集め、ゆっくり立ち昇らせる(draw call 増なし)
+let emberClusterCursor = 0;
+function emberCluster(cx, z) {
+  const pos = emberGeo.attributes.position.array;
+  for (let n = 0; n < 22; n += 1) {
+    const i = emberClusterCursor;
+    emberClusterCursor = (emberClusterCursor + 1) % EMBER_COUNT;
+    pos[i * 3] = cx + emberRng.range(-1.7, 1.7);
+    pos[i * 3 + 1] = emberRng.range(0.2, 2.6);
+    pos[i * 3 + 2] = z + emberRng.range(-0.3, 0.3);
+    emberSpeeds[i] = emberRng.range(0.5, 1.1); // 立ち昇りは通常よりやや速く
+  }
+}
 function updateEmbers(dt, elapsed) {
   const pos = emberGeo.attributes.position.array;
   for (let i = 0; i < EMBER_COUNT; i += 1) {
@@ -517,7 +530,7 @@ const mkInstanced = (geo, mat, count) => {
 function lacquerTextures() {
   const w = 64; const h = 256;
   const field = createNoiseField(4417, w, h, { octaves: 3, baseCell: 6 });
-  const base = new THREE.Color(COLOR.primary);
+  const base = new THREE.Color(0xb8aca4); // 中立の木肌色 — 実際の色相は material.color(コンボ推移)が掛かる
   const mapImg = new ImageData(w, h);
   const roughImg = new ImageData(w, h);
   for (let y = 0; y < h; y += 1) {
@@ -548,9 +561,13 @@ function lacquerTextures() {
   return { map: toTex(mapImg, true), roughnessMap: toTex(roughImg, false) };
 }
 const lacquer = lacquerTextures();
+// くぐり連鎖で鳥居の色相が推移する(朱 → 紅 → 茜紫 → 金 → 朱 …)。暖色〜神秘域のみで
+// 巡回し、brief の禁止事項(寒色ネオンへの逸脱)を守る。色は update 内で滑らかに lerp。
+const TORII_HUES = [0xc73e3a, 0xd1495b, 0xa83a8e, 0x8e5bd1, 0xc9a227].map((c) => new THREE.Color(c));
+const toriiColorTarget = TORII_HUES[0].clone();
 const toriiMat = new THREE.MeshStandardMaterial({
-  color: 0xffffff, map: lacquer.map, roughnessMap: lacquer.roughnessMap,
-  emissive: COLOR.primary, emissiveIntensity: 0.35, roughness: 1, metalness: 0.18,
+  color: TORII_HUES[0].clone(), map: lacquer.map, roughnessMap: lacquer.roughnessMap,
+  emissive: TORII_HUES[0].clone(), emissiveIntensity: 0.35, roughness: 1, metalness: 0.18,
 });
 const pillarMesh = mkInstanced(new THREE.BoxGeometry(0.28, 3.0, 0.28), toriiMat, GATE_POOL * 2);
 const kasagiMesh = mkInstanced(new THREE.BoxGeometry(4.9, 0.3, 0.4), toriiMat, GATE_POOL);
@@ -585,6 +602,49 @@ const decorToriiMat = new THREE.MeshStandardMaterial({ color: 0x5a1a12, roughnes
 const decorToriiPillar = mkInstanced(new THREE.BoxGeometry(0.5, 4.6, 0.5), decorToriiMat, DECOR_TORII * 2);
 const decorToriiKasagi = mkInstanced(new THREE.BoxGeometry(8.2, 0.5, 0.62), decorToriiMat, DECOR_TORII);
 const decorTorii = Array.from({ length: DECOR_TORII }, (_, i) => ({ z: -14 - 9 * i })); // 9 本 ×9 間隔で奥まで連なるトンネル
+
+// くぐり演出「光の帳」: 鳥居の開口に立つ光のカーテンを一瞬だけ通り抜ける(plane 1 枚を使い回し)
+function veilTexture() {
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 128;
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, 0, 128);
+  g.addColorStop(0, 'rgba(255,230,180,0)');
+  g.addColorStop(0.35, 'rgba(255,230,180,0.55)');
+  g.addColorStop(0.8, 'rgba(255,214,150,0.85)');
+  g.addColorStop(1, 'rgba(255,230,180,0.15)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 128);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const veil = new THREE.Mesh(
+  new THREE.PlaneGeometry(4.2, 3.1),
+  new THREE.MeshBasicMaterial({
+    map: veilTexture(), transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide,
+  }),
+);
+veil.visible = false;
+scene.add(veil);
+let veilT = 1; // 1 = 終了
+
+function playGateVeil(cx, z) {
+  veil.position.set(cx, 1.75, z);
+  veil.material.color.copy(toriiColorTarget).lerp(new THREE.Color(0xfff2d8), 0.55); // 鳥居の現在色を帯びた光
+  veilT = 0;
+  veil.visible = true;
+}
+function updateVeil(dt) {
+  if (!veil.visible) return;
+  veilT += dt / 0.75;
+  const fade = Math.sin(Math.min(1, veilT) * Math.PI); // 0→1→0 の柔らかい包絡
+  veil.material.opacity = fade * 0.5;
+  veil.scale.set(1 + veilT * 0.35, 1 + veilT * 0.12, 1);
+  if (veilT >= 1) veil.visible = false;
+}
+let flamePulse = 0; // くぐり時の炎の膨張(1 → 0 へ減衰)
 
 // 松明の炎: 全炎を THREE.Points 1 本で描画(draw call +1)。位置は syncWorld が毎フレーム同期する
 const FLAME_COUNT = DECOR_LANTERNS + GATE_POOL * 4;
@@ -815,7 +875,12 @@ function updatePlaying(dt) {
       g.passed = true;
       if (Math.abs(state.playerLane - g.center) <= 1) {
         state.score += 1;
-        burst.burst(player.position, 14, 3);
+        // 幻想演出: 光の帳を抜け、火の粉が立ち昇り、炎が一拍膨らみ、鳥居の色相がひとつ進む
+        playGateVeil(LANES[g.center], g.z);
+        emberCluster(LANES[g.center], g.z);
+        flamePulse = 1;
+        toriiColorTarget.copy(TORII_HUES[state.score % TORII_HUES.length]);
+        burst.burst(player.position, 6, 2);
         disturbWater(state.playerX, 0.55, 1.1, 0.22); // くぐり抜けの大波紋
         sfx.ping(0.06);
       }
@@ -864,11 +929,15 @@ const loop = createLoop({ // principles.md #1
     if (water) water.material.uniforms.time.value += dt * 0.55;
     stepWaterSim(worldSpeed, dt);
     const flick = 1 + Math.sin(loop.elapsed() * 21) * 0.08 + Math.sin(loop.elapsed() * 47) * 0.05;
-    flameLight.intensity = 3.4 * flick; // 炎の揺らぎが照度に乗る(周囲の鳥居・水面の照り返しも揺れる)
+    flameLight.intensity = 3.4 * flick * (1 + flamePulse * 0.9); // 揺らぎ + くぐり時の一拍の膨張
     flameCore.scale.setScalar(0.85 * flick);
-    flameHalo.scale.setScalar(1.9 * (1 + (flick - 1) * 0.6));
+    flameHalo.scale.setScalar(1.9 * (1 + (flick - 1) * 0.6) * (1 + flamePulse * 0.5));
     flameHalo.material.rotation += dt * 0.8;
     flamePointsMat.size = 0.5 + Math.sin(loop.elapsed() * 17) * 0.05;
+    updateVeil(dt);
+    flamePulse = Math.max(0, flamePulse - dt * 2.2);
+    toriiMat.color.lerp(toriiColorTarget, dt * 2.4);
+    toriiMat.emissive.copy(toriiMat.color);
     assignTorchLights([
       1 + Math.sin(loop.elapsed() * 19) * 0.18,
       1 + Math.sin(loop.elapsed() * 23 + 2.1) * 0.18,
