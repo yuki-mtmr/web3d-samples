@@ -24,7 +24,7 @@
     "toneMapping": "neutral",
     "exposure": 0.9,
     "envIntensity": 0.25,
-    "shadows": true,
+    "shadows": false,
     "background": "procedural"
   }
 }

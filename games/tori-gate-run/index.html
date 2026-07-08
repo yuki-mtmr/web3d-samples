@@ -406,28 +406,126 @@ function stoneTexture() {
   tex.repeat.set(14, 48);
   return tex;
 }
-const ground = new THREE.Mesh(
+// 水面(参道 = 夜の水鏡): Water.js の実平面反射で鳥居・月・炎が「実際に」映り込む。
+// 法線マップは手続き生成(外部画像なし): fbm 高さ場から Sobel 差分で法線を焼く。
+function waterNormalTexture() {
+  const size = 256;
+  const field = createNoiseField(5150, size, size, { octaves: 4, baseCell: 18 });
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const img = new ImageData(size, size);
+  const at = (x, y) => field[((y + size) % size) * size + ((x + size) % size)];
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const i = (y * size + x) * 4;
+      img.data[i] = (0.5 - (at(x + 1, y) - at(x - 1, y)) * 1.6) * 255;
+      img.data[i + 1] = (0.5 - (at(x, y + 1) - at(x, y - 1)) * 1.6) * 255;
+      img.data[i + 2] = 255;
+      img.data[i + 3] = 255;
+    }
+  }
+  canvas.getContext('2d').putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+// A2(boot≤3s)保護: Water のシェーダコンパイルは起動計測をブロックするため、
+// 起動時は安価な暗色板を置き、初回描画後(title 表示中)に Water へ差し替える(PMREM 遅延と同じ定石)。
+const waterPlaceholder = new THREE.Mesh(
   new THREE.PlaneGeometry(60, 200),
-  new THREE.MeshStandardMaterial({ color: 0xffffff, map: stoneTexture(), roughness: 0.9 }),
+  new THREE.MeshStandardMaterial({ color: 0x0a1220, roughness: 0.25, metalness: 0.4 }),
 );
-ground.rotation.x = -Math.PI / 2;
-ground.position.set(0, -0.01, -60);
-ground.receiveShadow = true;
-scene.add(ground);
+waterPlaceholder.rotation.x = -Math.PI / 2;
+waterPlaceholder.position.set(0, -0.01, -60);
+scene.add(waterPlaceholder);
+let water = null;
+setTimeout(async () => {
+  // Water は起動パスから外す(モジュール取得・パースも A2 予算を食うため動的 import)
+  const { Water } = await import('three/addons/objects/Water.js');
+  water = new Water(new THREE.PlaneGeometry(60, 200), {
+    textureWidth: 512,
+    textureHeight: 512,
+    waterNormals: waterNormalTexture(),
+    sunDirection: new THREE.Vector3(0.55, 0.7, -0.9).normalize(), // 月の方向と一致させる
+    sunColor: 0x9db8ff,
+    waterColor: 0x0b0f1a, // 宵の水(青すぎない宵闇)
+    distortionScale: 1.7,
+    fog: true,
+  });
+  water.rotation.x = -Math.PI / 2;
+  water.position.set(0, -0.01, -60);
+  scene.add(water);
+  scene.remove(waterPlaceholder);
+}, 400);
+
+// 波紋: プレイヤーの進行で広がるリング(プール制)。鳥居くぐり・被弾で強い波紋。
+const RIPPLE_POOL = 7;
+const rippleGeo = new THREE.RingGeometry(0.42, 0.5, 48);
+const ripples = Array.from({ length: RIPPLE_POOL }, () => {
+  const mesh = new THREE.Mesh(rippleGeo, new THREE.MeshBasicMaterial({
+    color: 0xe8cfa0, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, // 炎の照り返し色
+    depthWrite: false, fog: false, side: THREE.DoubleSide,
+  }));
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.y = 0.03;
+  mesh.visible = false;
+  scene.add(mesh);
+  return { mesh, t: 1, strength: 1 };
+});
+let rippleCursor = 0;
+let rippleTimer = 0;
+function spawnRipple(x, z, strength = 1) {
+  const r = ripples[rippleCursor];
+  rippleCursor = (rippleCursor + 1) % RIPPLE_POOL;
+  r.t = 0;
+  r.strength = strength;
+  r.mesh.position.x = x;
+  r.mesh.position.z = z;
+  r.mesh.visible = true;
+}
+function updateRipples(dt) {
+  for (const r of ripples) {
+    if (!r.mesh.visible) continue;
+    r.t += dt / 1.4;
+    r.mesh.scale.setScalar(0.6 + r.t * 5.2 * r.strength);
+    r.mesh.material.opacity = Math.max(0, 1 - r.t) * 0.34 * r.strength;
+    if (r.t >= 1) r.mesh.visible = false;
+  }
+}
 
 // プレイヤー(提灯を提げた駆け手)
+// プレイヤー = 火の玉(炎): コア + ハロの加算スプライト + 追従 PointLight(decay=2 の物理減衰)。
+// 鳥居の下を潜る瞬間、柱・貫が炎の光で「実際に」照らされ、離れると距離の二乗で減衰する。
 const player = new THREE.Group();
-const body = new THREE.Mesh(
-  new THREE.CapsuleGeometry(0.32, 0.55, 4, 12),
-  new THREE.MeshStandardMaterial({ color: 0x2c3550, roughness: 0.6 }),
-);
-body.position.y = 0.65;
-const handLantern = new THREE.Mesh(
-  new THREE.BoxGeometry(0.22, 0.3, 0.22),
-  new THREE.MeshStandardMaterial({ color: COLOR.accent, emissive: COLOR.accent, emissiveIntensity: 1.4 }),
-);
-handLantern.position.set(0.42, 0.75, 0.1);
-player.add(body, handLantern);
+function flameTexture(innerColor, outerColor) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(32, 34, 2, 32, 34, 30);
+  g.addColorStop(0, innerColor);
+  g.addColorStop(0.45, outerColor);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const flameCore = new THREE.Sprite(new THREE.SpriteMaterial({
+  map: flameTexture('#fff9ec', 'rgba(255,190,90,0.85)'),
+  blending: THREE.AdditiveBlending, depthWrite: false,
+}));
+flameCore.scale.setScalar(0.85);
+flameCore.position.y = 0.72;
+const flameHalo = new THREE.Sprite(new THREE.SpriteMaterial({
+  map: flameTexture('rgba(255,170,70,0.8)', 'rgba(230,90,30,0.28)'),
+  blending: THREE.AdditiveBlending, depthWrite: false,
+}));
+flameHalo.scale.setScalar(1.9);
+flameHalo.position.y = 0.8;
+const flameLight = new THREE.PointLight(0xffb45e, 3.4, 15, 2);
+flameLight.position.y = 0.95;
+player.add(flameCore, flameHalo, flameLight);
 scene.add(player);
 
 // 鳥居(朱)・石垣(封鎖レーン)・参道両脇の提灯列 — 全て InstancedMesh。
@@ -670,6 +768,13 @@ document.getElementById('muteBtn').addEventListener('click', (e) => {
 function updatePlaying(dt) {
   state.time += dt;
 
+  // 波紋: 炎が水面を進む痕跡(周期スポーン)。横移動直後は強めに出す
+  rippleTimer -= dt;
+  if (rippleTimer <= 0) {
+    spawnRipple(state.playerX, 0.55, 0.85);
+    rippleTimer = 0.34;
+  }
+
   const pressed = input.consumePressed();
   if (pressed.has('left')) { state.playerLane = Math.max(0, state.playerLane - 1); sfx.click(0.05); }
   if (pressed.has('right')) { state.playerLane = Math.min(LANES.length - 1, state.playerLane + 1); sfx.click(0.05); }
@@ -696,12 +801,14 @@ function updatePlaying(dt) {
       if (Math.abs(state.playerLane - g.center) <= 1) {
         state.score += 1;
         burst.burst(player.position, 14, 3);
+        spawnRipple(state.playerX, 0.55, 1.7); // くぐり抜けの大波紋
         sfx.ping(0.06);
       }
     }
     // 石垣衝突: 封鎖レーンにいると被弾
     if (Math.abs(g.z) < 0.8 && Math.abs(state.playerLane - g.center) > 1) {
       burst.burst(player.position, 36, 5);
+      spawnRipple(state.playerX, 0.55, 2.2); // 被弾の大波紋
       shake.add(0.6);
       hitstop.trigger(0.1);
       sfx.crash();
@@ -740,6 +847,14 @@ const loop = createLoop({ // principles.md #1
     koumonTexLarge.rotation += dt * 0.35;
     koumonTexSmall.rotation -= dt * 0.5; // 逆方向 UV 回転で「渦巻く」重なりを作る
     updateEmbers(dt, loop.elapsed());
+    // 水面・波紋・炎(そこにある感の物理表現)
+    if (water) water.material.uniforms.time.value += dt * 0.7;
+    updateRipples(dt);
+    const flick = 1 + Math.sin(loop.elapsed() * 21) * 0.08 + Math.sin(loop.elapsed() * 47) * 0.05;
+    flameLight.intensity = 3.4 * flick; // 炎の揺らぎが照度に乗る(周囲の鳥居・水面の照り返しも揺れる)
+    flameCore.scale.setScalar(0.85 * flick);
+    flameHalo.scale.setScalar(1.9 * (1 + (flick - 1) * 0.6));
+    flameHalo.material.rotation += dt * 0.8;
   },
   render: () => {
     // 離散状態(レーン)と連続描画(lerp)の分離 (principles.md #3)
